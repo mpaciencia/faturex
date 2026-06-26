@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "FatureX Mobile",
+    "slug": "faturex-mobile",
+    "scheme": "faturexmobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "platforms": ["ios", "android", "web"],
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Permitir acesso à câmara para ler QR Codes e tirar fotografias."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Permitir acesso à galeria para anexar fotos."
+        }
+      ]
+    ],
+    "android": {
+      "package": "com.faturex.mobile",
+      "permissions": ["CAMERA", "READ_MEDIA_IMAGES"],
+      "usesCleartextTraffic": true
+    },
+    "ios": {
+      "bundleIdentifier": "com.faturex.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Permitir acesso à câmara para ler QR Codes e tirar fotografias.",
+        "NSPhotoLibraryUsageDescription": "Permitir acesso à galeria para anexar fotos.",
+        "NSPhotoLibraryAddUsageDescription": "Permitir guardar imagens capturadas, se necessário."
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
