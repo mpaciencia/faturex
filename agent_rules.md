@@ -89,7 +89,7 @@ CREATE TABLE faturas (
 
 ## 5. Parse do QR Code AT (Formato Português)
 
-O QR Code das faturas portuguesas segue o formato definido pela AT. A string tem campos separados por `*`, com chaves como `A:`, `B:`, `C:`, `D:`, `E:`, `F:`, `I1:`, `Q:`, `R:`, etc.
+O QR Code das faturas portuguesas segue o formato definido pela AT (Portaria n.º 195/2020). A string tem campos separados por `*`, com chaves fixas e ordem obrigatória.
 
 Campos a extrair obrigatoriamente:
 
@@ -97,9 +97,11 @@ Campos a extrair obrigatoriamente:
 |---|---|---|
 | `A:` | NIF do emissor | `nif_emissor` |
 | `F:` | Data da fatura (YYYYMMDD) | `data_fatura` |
-| `O:` | ATCUD | `atcud` |
-| `VT:` | Total com IVA | `valor_total` |
-| `I1:` / `J1:` / `K1:` | IVA (soma das taxas) | `imposto_total` |
+| `H:` | ATCUD | `atcud` |
+| `O:` | Total com impostos | `valor_total` |
+| `N:` | Total de impostos (IVA) | `imposto_total` |
+
+> **Nota:** `I1:` indica o espaço fiscal (`PT`, `PT-AC`, `PT-MA`), não o valor de IVA. Os valores de IVA por taxa estão em pares de campos (`I3:`/`I4:`, `I5:`/`I6:`, `I7:`/`I8:`), mas não são necessários para o registo base.
 
 O serviço `qr_parser.py` é responsável por este parse. Se algum campo obrigatório estiver ausente ou malformado, lança uma exceção interna que o router transforma em `400 Bad Request` com mensagem descritiva.
 

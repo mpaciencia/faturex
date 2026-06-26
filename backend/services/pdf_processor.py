@@ -9,8 +9,19 @@ Devolve a string bruta do QR e os bytes da imagem PNG.
 import io
 
 import fitz  # PyMuPDF
-from pyzbar.pyzbar import decode as pyzbar_decode
 from PIL import Image
+
+try:
+    import cv2
+    import numpy as np
+except Exception:  # pragma: no cover - optional dependency fallback
+    cv2 = None
+    np = None
+
+try:
+    from pyzbar.pyzbar import decode as pyzbar_decode
+except Exception:  # pragma: no cover - optional dependency fallback
+    pyzbar_decode = None
 
 
 class PDFProcessingError(Exception):
@@ -50,42 +61,58 @@ def extract_qr_from_pdf(pdf_bytes: bytes) -> tuple[str, bytes]:
         doc.close()
         raise PDFProcessingError("O ficheiro PDF não contém nenhuma página.")
 
-    # Renderizar a primeira página como pixmap com resolução suficiente para QR
     try:
-        page = doc[0]
-        # DPI elevado (300) para garantir legibilidade do QR Code
-        mat = fitz.Matrix(300 / 72, 300 / 72)
-        pix = page.get_pixmap(matrix=mat)
+        # Renderizar a primeira página como pixmap com resolução suficiente para QR
+        try:
+            page = doc[0]
+            # DPI elevado (300) para garantir legibilidade do QR Code
+            mat = fitz.Matrix(300 / 72, 300 / 72)
+            pix = page.get_pixmap(matrix=mat)
+        except Exception as exc:
+            raise PDFProcessingError(
+                f"Erro ao renderizar a primeira página do PDF: {exc}"
+            )
+
+        # Converter pixmap da primeira página para bytes PNG em memória
+        png_bytes = pix.tobytes(output="png")
+
+        # Procurar o QR em todas as páginas; alguns PDFs incluem a capa na primeira.
+        qr_string = ""
+        qr_detector = cv2.QRCodeDetector() if cv2 is not None else None
+
+        for page_index in range(doc.page_count):
+            page = doc[page_index]
+            mat = fitz.Matrix(300 / 72, 300 / 72)
+            pix = page.get_pixmap(matrix=mat)
+            image_bytes = pix.tobytes(output="png")
+
+            if qr_detector is not None and np is not None:
+                image_array = np.frombuffer(image_bytes, dtype=np.uint8)
+                image = cv2.imdecode(image_array, cv2.IMREAD_GRAYSCALE)
+                if image is not None:
+                    decoded_text, _, _ = qr_detector.detectAndDecode(image)
+                    if decoded_text and decoded_text.strip():
+                        qr_string = decoded_text.strip()
+                        break
+
+            if pyzbar_decode is not None:
+                image = Image.open(io.BytesIO(image_bytes))
+                decoded_objects = pyzbar_decode(image)
+
+                if decoded_objects:
+                    qr_string = decoded_objects[0].data.decode("utf-8")
+                    if qr_string.strip():
+                        break
+
+        if not qr_string.strip():
+            raise PDFProcessingError(
+                "Não foi encontrado nenhum QR Code legível em nenhuma página do PDF."
+            )
+
+        return qr_string, png_bytes
+    except PDFProcessingError:
+        raise
     except Exception as exc:
+        raise PDFProcessingError(f"Erro ao decodificar QR Code da imagem: {exc}")
+    finally:
         doc.close()
-        raise PDFProcessingError(
-            f"Erro ao renderizar a primeira página do PDF: {exc}"
-        )
-
-    # Converter pixmap para bytes PNG em memória
-    png_bytes = pix.tobytes(output="png")
-    doc.close()
-
-    # Decodificar QR Code da imagem PNG usando pyzbar
-    try:
-        image = Image.open(io.BytesIO(png_bytes))
-        decoded_objects = pyzbar_decode(image)
-    except Exception as exc:
-        raise PDFProcessingError(
-            f"Erro ao decodificar QR Code da imagem: {exc}"
-        )
-
-    if not decoded_objects:
-        raise PDFProcessingError(
-            "Não foi encontrado nenhum QR Code na primeira página do PDF."
-        )
-
-    # Usar o primeiro QR Code encontrado
-    qr_string = decoded_objects[0].data.decode("utf-8")
-
-    if not qr_string.strip():
-        raise PDFProcessingError(
-            "O QR Code encontrado está vazio ou ilegível."
-        )
-
-    return qr_string, png_bytes

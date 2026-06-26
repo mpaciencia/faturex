@@ -1,10 +1,22 @@
 """
 Parse da string QR Code AT (formato português).
 
-Campos separados por '*', com chaves como A:, B:, F:, O:, VT:, I1:, J1:, K1:, etc.
+Campos separados por '*', com chaves como A:, B:, F:, H:, I1:, I7:, I8:, N:, O:, Q:, R:, etc.
 Extrai: atcud, nif_emissor, data_fatura, valor_total, imposto_total.
+
+Especificação AT (Portaria n.º 195/2020):
+    A:  NIF do emissor
+    F:  Data da fatura (YYYYMMDD)
+    H:  ATCUD (código de validação da série + número sequencial)
+    I7: Base tributável à taxa normal
+    I8: IVA à taxa normal
+    N:  IVA total
+    O:  Valor total do documento (bruto com IVA)
+    Q:  Hash dos 4 caracteres
+    R:  Número do certificado do software
 """
 
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 
@@ -65,13 +77,9 @@ def parse_qr_string(raw_qr: str) -> dict:
             "Formato esperado: YYYYMMDD."
         )
 
-    # Validar que a data é coerente (ano, mês, dia)
+    # Validar que a data é coerente e existe no calendário.
     try:
-        ano = int(data_fatura_raw[:4])
-        mes = int(data_fatura_raw[4:6])
-        dia = int(data_fatura_raw[6:8])
-        if not (1 <= mes <= 12 and 1 <= dia <= 31 and ano >= 2000):
-            raise ValueError
+        datetime.strptime(data_fatura_raw, "%Y%m%d")
     except ValueError:
         raise QRParseError(
             f"Campo 'F' (data da fatura) contém data inválida: '{data_fatura_raw}'."
@@ -80,37 +88,34 @@ def parse_qr_string(raw_qr: str) -> dict:
     # Converter para formato ISO (YYYY-MM-DD) para uso posterior
     data_fatura = f"{data_fatura_raw[:4]}-{data_fatura_raw[4:6]}-{data_fatura_raw[6:8]}"
 
-    # --- ATCUD (campo O:) ---
-    atcud = campos.get("O")
+    # --- ATCUD (campo H: conforme especificação AT - Portaria 195/2020) ---
+    atcud = campos.get("H")
     if not atcud:
-        raise QRParseError("Campo obrigatório 'O' (ATCUD) ausente no QR Code.")
+        raise QRParseError("Campo obrigatório 'H' (ATCUD) ausente no QR Code.")
 
-    # --- Valor total com IVA (campo VT:) ---
-    valor_total_raw = campos.get("VT")
+    # --- Valor total do documento (campo O: conforme especificação AT) ---
+    valor_total_raw = campos.get("O")
     if not valor_total_raw:
-        raise QRParseError("Campo obrigatório 'VT' (valor total) ausente no QR Code.")
+        raise QRParseError("Campo obrigatório 'O' (valor total) ausente no QR Code.")
 
     try:
         valor_total = Decimal(valor_total_raw)
     except InvalidOperation:
         raise QRParseError(
-            f"Campo 'VT' (valor total) não é um número válido: '{valor_total_raw}'."
+            f"Campo 'O' (valor total) não é um número válido: '{valor_total_raw}'."
         )
 
-    # --- Imposto total (IVA) — soma de I1:, J1:, K1: ---
-    # Correspondem às três taxas de IVA possíveis (reduzida, intermédia, normal).
-    # Podem estar todas presentes ou apenas algumas.
-    imposto_total = Decimal("0")
-    campos_iva = ["I1", "J1", "K1"]
-    for campo_iva in campos_iva:
-        valor_iva_raw = campos.get(campo_iva)
-        if valor_iva_raw:
-            try:
-                imposto_total += Decimal(valor_iva_raw)
-            except InvalidOperation:
-                raise QRParseError(
-                    f"Campo '{campo_iva}' (IVA) não é um número válido: '{valor_iva_raw}'."
-                )
+    # --- Imposto total (campo N:) ---
+    n_raw = campos.get("N")
+    if not n_raw:
+        raise QRParseError("Campo obrigatório 'N' (IVA total) ausente no QR Code.")
+
+    try:
+        imposto_total = Decimal(n_raw)
+    except InvalidOperation:
+        raise QRParseError(
+            f"Campo 'N' (IVA total) não é um número válido: '{n_raw}'."
+        )
 
     return {
         "atcud": atcud,

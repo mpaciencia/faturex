@@ -17,7 +17,7 @@ Sistema automatizado de digitalização, extração e categorização de faturas
 | Base de Dados | Supabase (PostgreSQL) |
 | Storage | Supabase Storage |
 | Automação Email | Google Apps Script |
-| IA (categorização) | Google Gemini API (`gemini-2.0-flash`) |
+| IA (categorização) | Groq API (`meta-llama/llama-4-scout-17b-16e-instruct`) |
 | Relatórios | `openpyxl` |
 
 ## Estrutura do Backend
@@ -33,7 +33,7 @@ backend/
 │   ├── supabase_client.py   # Wrapper Supabase (DB + Storage)
 │   ├── qr_parser.py         # Parse QR Code AT → campos estruturados
 │   ├── pdf_processor.py     # Extração QR de PDFs (PyMuPDF + pyzbar)
-│   └── gemini_client.py     # Chamada Gemini API para categorização
+│   └── gemini_client.py     # Chamada Groq API para categorização
 ├── models/
 │   └── schemas.py           # Modelos Pydantic
 └── requirements.txt
@@ -45,7 +45,7 @@ backend/
 
 - Python 3.11+
 - Conta Supabase (com tabela `faturas` e bucket `documentos` configurados)
-- API Key do Google Gemini
+- API Key do Groq
 
 ### Instalação
 
@@ -65,7 +65,7 @@ Criar ficheiro `.env` na pasta `backend/`:
 API_KEY=<chave-api-do-backend>
 SUPABASE_URL=<url-do-projeto-supabase>
 SUPABASE_KEY=<chave-do-supabase>
-GEMINI_API_KEY=<chave-api-gemini>
+GROQ_API_KEY=<chave-api-groq>
 ```
 
 ### Execução
