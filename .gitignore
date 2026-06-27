@@ -38,3 +38,6 @@ htmlcov/
 
 # Byte-compiled
 *.pyc
+
+# Agent rules
+agent_rules.md
