@@ -22,6 +22,7 @@ class QRDataPayload(BaseModel):
     valor_total: Decimal
     imposto_total: Decimal
     raw_qr_string: str
+    observacoes: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +39,11 @@ class FaturaCreateResponse(BaseModel):
     """Resposta devolvida após inserção bem-sucedida de uma fatura."""
     id: str
     categoria: str
+
+
+class FaturaCreateInput(BaseModel):
+    """Campos adicionais do formulário de criação de fatura."""
+    observacoes: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

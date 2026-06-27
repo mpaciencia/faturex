@@ -7,10 +7,12 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
+import { router } from "expo-router";
 
 import { backendConfigIssues, hasValidBackendConfig } from "../src/config";
 import { submitInvoice } from "../src/services/faturexApi";
@@ -35,6 +37,7 @@ export default function HomeScreen() {
   const [message, setMessage] = useState("Aguardando leitura do QR Code...");
   const [qrPayload, setQrPayload] = useState<AtQrPayload | null>(null);
   const [selectedType, setSelectedType] = useState<DocumentType | null>(null);
+  const [observacoes, setObservacoes] = useState("");
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [imageName, setImageName] = useState<string | undefined>(undefined);
   const [imageType, setImageType] = useState<string | undefined>(undefined);
@@ -49,6 +52,7 @@ export default function HomeScreen() {
     setMessage("Aguardando leitura do QR Code...");
     setQrPayload(null);
     setSelectedType(null);
+    setObservacoes("");
     setImageUri(null);
     setImageName(undefined);
     setImageType(undefined);
@@ -161,6 +165,7 @@ export default function HomeScreen() {
       const result = await submitInvoice({
         qrPayload,
         tipo: selectedType,
+        observacoes,
         imageUri,
         imageName,
         imageType,
@@ -250,6 +255,15 @@ export default function HomeScreen() {
             );
           })}
         </View>
+          <TextInput
+            value={observacoes}
+            onChangeText={setObservacoes}
+            placeholder="Observações (opcional)"
+            placeholderTextColor="#9ca3af"
+            multiline
+            numberOfLines={3}
+            style={styles.textInput}
+          />
       </View>
 
       <View style={styles.section}>
@@ -278,6 +292,9 @@ export default function HomeScreen() {
             )}
           </Pressable>
         </View>
+        <Pressable style={styles.secondaryButton} onPress={() => router.push("/relatorios" as never) }>
+          <Text style={styles.secondaryButtonText}>Abrir Exportação</Text>
+        </Pressable>
       </View>
 
       <View style={styles.section}>
@@ -453,5 +470,15 @@ const styles = StyleSheet.create({
     color: "#6b7280",
     fontFamily: "monospace",
     fontSize: 12,
+  },
+  textInput: {
+    minHeight: 72,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: "#111",
+    textAlignVertical: "top",
+    backgroundColor: "#fff",
   },
 });

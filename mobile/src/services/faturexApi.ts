@@ -4,6 +4,7 @@ import type { AtQrPayload, DocumentType } from "../utils/qrValidation";
 export interface SubmitInvoiceInput {
   qrPayload: AtQrPayload;
   tipo: DocumentType;
+  observacoes?: string;
   imageUri: string;
   imageName?: string;
   imageType?: string;
@@ -44,6 +45,7 @@ function parseBackendError(text: string): string {
 export async function submitInvoice({
   qrPayload,
   tipo,
+  observacoes,
   imageUri,
   imageName,
   imageType,
@@ -59,6 +61,7 @@ export async function submitInvoice({
   const formData = new FormData();
   formData.append("qr_data", JSON.stringify(qrPayload));
   formData.append("tipo", tipo);
+  formData.append("observacoes", observacoes?.trim() ?? "");
   formData.append(
     "file",
     {

@@ -6,6 +6,7 @@ fazer upload de documentos e consultar faturas por período.
 """
 
 import logging
+from urllib.parse import urlparse
 
 from supabase import create_client, Client
 
@@ -84,6 +85,43 @@ def upload_documento(path: str, content: bytes, content_type: str) -> str:
     # Obter URL pública do ficheiro
     url_response = _client.storage.from_(_BUCKET).get_public_url(path)
     return url_response
+
+
+def download_documento(path: str) -> bytes:
+    """
+    Faz download de um ficheiro do Supabase Storage.
+
+    Args:
+        path: Caminho relativo dentro do bucket.
+
+    Returns:
+        Bytes do ficheiro descarregado.
+    """
+    response = _client.storage.from_(_BUCKET).download(path)
+
+    if isinstance(response, bytes):
+        return response
+
+    if hasattr(response, "data") and isinstance(response.data, (bytes, bytearray)):
+        return bytes(response.data)
+
+    if hasattr(response, "content") and isinstance(response.content, (bytes, bytearray)):
+        return bytes(response.content)
+
+    raise Exception(f"Falha ao descarregar documento do Supabase: {path}")
+
+
+def storage_path_from_public_url(url: str) -> str:
+    """
+    Extrai o path do objeto a partir de uma URL pública do Supabase Storage.
+    """
+    parsed = urlparse(url)
+    marker = "/object/public/"
+
+    if marker not in parsed.path:
+        raise ValueError(f"URL de documento inválida: {url}")
+
+    return parsed.path.split(marker, 1)[1].split("/", 1)[1]
 
 
 def get_faturas_by_period(data_inicio: str, data_fim: str) -> list:

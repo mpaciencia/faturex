@@ -7,11 +7,13 @@ Os routers apenas orquestram serviços. Nenhuma lógica de negócio aqui.
 import json
 import logging
 from decimal import Decimal
+from typing import Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from models.schemas import FaturaCreateResponse, QRDataPayload, TIPOS_VALIDOS
 from services import gemini_client, supabase_client
+from services.nif_service import get_nome_emissor
 from services.pdf_processor import PDFProcessingError, extract_qr_from_pdf
 from services.qr_parser import QRParseError, parse_qr_string
 
@@ -39,6 +41,7 @@ def _build_storage_path(origem: str, data_fatura: str, atcud: str, ext: str) -> 
 async def criar_fatura_mobile(
     qr_data: str = Form(...),
     tipo: str = Form(...),
+    observacoes: Optional[str] = Form(None),
     file: UploadFile = File(...),
 ):
     """
@@ -127,6 +130,8 @@ async def criar_fatura_mobile(
 
     # --- Inferir categoria via Gemini ---
     categoria = gemini_client.inferir_categoria(file_bytes, mime_type=content_type)
+    nome_emissor = get_nome_emissor(qr_payload.nif_emissor)
+    observacoes_limpa = observacoes.strip() if observacoes and observacoes.strip() else None
 
     # --- Inserir na DB ---
     fatura_data = {
@@ -140,6 +145,8 @@ async def criar_fatura_mobile(
         "categoria": categoria,
         "url_documento": url_documento,
         "origem": "Mobile",
+        "nome_emissor": nome_emissor,
+        "observacoes": observacoes_limpa,
     }
 
     try:
@@ -237,6 +244,7 @@ async def criar_fatura_email(
 
     # --- Inferir categoria via Gemini (usando PNG da primeira página) ---
     categoria = gemini_client.inferir_categoria(png_bytes, mime_type="image/png")
+    nome_emissor = get_nome_emissor(qr_data["nif_emissor"])
 
     # --- Inserir na DB ---
     fatura_data = {
@@ -250,6 +258,8 @@ async def criar_fatura_email(
         "categoria": categoria,
         "url_documento": url_documento,
         "origem": "Email",
+        "nome_emissor": nome_emissor,
+        "observacoes": None,
     }
 
     try:
