@@ -11,10 +11,14 @@ from fastapi.security import APIKeyHeader
 from config import settings
 from routes import invoices, reports
 
+# ---------------------------------------------------------------------------
+# Configuração de Logging para o Render
+# ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    format="%(asctime)s [%(levelname)s] - %(message)s",
 )
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="FatureX API",
@@ -62,3 +66,19 @@ app.include_router(reports.router, dependencies=[Depends(_verify_api_key)])
 async def health_check():
     """Endpoint de saúde — não requer autenticação."""
     return {"status": "ok", "service": "FatureX API"}
+
+
+@app.get("/api/test-error", tags=["Debug"])
+async def test_error_logging():
+    """Endpoint de exemplo para demonstrar a captura e logging de exceções."""
+    try:
+        # Simulação de erro numa chamada de API de IA ou inserção no Supabase
+        raise ValueError("Falha simulada de comunicação com o serviço externo.")
+    except Exception:
+        # Grava automaticamente a stack trace completa
+        logger.exception("Erro ao processar serviço externo (IA/Supabase)")
+        raise HTTPException(
+            status_code=500,
+            detail="Erro interno de simulação de logging."
+        )
+

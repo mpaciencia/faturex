@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from models.schemas import FaturaCreateResponse, QRDataPayload, TIPOS_VALIDOS
-from services import gemini_client, supabase_client
+from services import ai_client, supabase_client
 from services.nif_service import get_nome_emissor
 from services.pdf_processor import PDFProcessingError, extract_qr_from_pdf
 from services.qr_parser import QRParseError, parse_qr_string
@@ -44,6 +44,7 @@ async def criar_fatura_mobile(
     observacoes: Optional[str] = Form(None),
     file: UploadFile = File(...),
 ):
+    logger.info("Recebida requisição POST /mobile para criar fatura.")
     """
     Fluxo A — App Mobile.
 
@@ -85,8 +86,8 @@ async def criar_fatura_mobile(
             )
     except HTTPException:
         raise
-    except Exception as exc:
-        logger.error("Erro ao verificar duplicado: %s", exc)
+    except Exception:
+        logger.exception("Erro ao verificar duplicado no fluxo mobile")
         raise HTTPException(
             status_code=500,
             detail="Erro interno ao verificar duplicado.",
@@ -121,15 +122,15 @@ async def criar_fatura_mobile(
             content=file_bytes,
             content_type=content_type,
         )
-    except Exception as exc:
-        logger.error("Erro no upload para Storage: %s", exc)
+    except Exception:
+        logger.exception("Erro no upload para Storage no fluxo mobile")
         raise HTTPException(
             status_code=500,
             detail="Erro interno ao guardar o documento no Storage.",
         )
 
-    # --- Inferir categoria via Gemini ---
-    categoria = gemini_client.inferir_categoria(file_bytes, mime_type=content_type)
+    # --- Inferir categoria via AI (Groq/Llama) ---
+    categoria = ai_client.inferir_categoria(file_bytes, mime_type=content_type)
     nome_emissor = get_nome_emissor(qr_payload.nif_emissor)
     observacoes_limpa = observacoes.strip() if observacoes and observacoes.strip() else None
 
@@ -151,8 +152,8 @@ async def criar_fatura_mobile(
 
     try:
         registo = supabase_client.insert_fatura(fatura_data)
-    except Exception as exc:
-        logger.error("Erro ao inserir fatura na DB: %s", exc)
+    except Exception:
+        logger.exception("Erro ao inserir fatura na DB no fluxo mobile")
         raise HTTPException(
             status_code=500,
             detail="Erro interno ao guardar a fatura na base de dados.",
@@ -166,6 +167,7 @@ async def criar_fatura_email(
     tipo: str = Form(...),
     file: UploadFile = File(...),
 ):
+    logger.info("Recebida requisição POST /email para processar PDF da fatura.")
     """
     Fluxo B — Gmail / Google Apps Script.
 
@@ -219,8 +221,8 @@ async def criar_fatura_email(
             )
     except HTTPException:
         raise
-    except Exception as exc:
-        logger.error("Erro ao verificar duplicado: %s", exc)
+    except Exception:
+        logger.exception("Erro ao verificar duplicado no fluxo email")
         raise HTTPException(
             status_code=500,
             detail="Erro interno ao verificar duplicado.",
@@ -235,15 +237,15 @@ async def criar_fatura_email(
             content=pdf_bytes,
             content_type="application/pdf",
         )
-    except Exception as exc:
-        logger.error("Erro no upload para Storage: %s", exc)
+    except Exception:
+        logger.exception("Erro no upload para Storage no fluxo email")
         raise HTTPException(
             status_code=500,
             detail="Erro interno ao guardar o documento no Storage.",
         )
 
-    # --- Inferir categoria via Gemini (usando PNG da primeira página) ---
-    categoria = gemini_client.inferir_categoria(png_bytes, mime_type="image/png")
+    # --- Inferir categoria via AI (Groq/Llama) (usando PNG da primeira página) ---
+    categoria = ai_client.inferir_categoria(png_bytes, mime_type="image/png")
     nome_emissor = get_nome_emissor(qr_data["nif_emissor"])
 
     # --- Inserir na DB ---
@@ -264,8 +266,8 @@ async def criar_fatura_email(
 
     try:
         registo = supabase_client.insert_fatura(fatura_data)
-    except Exception as exc:
-        logger.error("Erro ao inserir fatura na DB: %s", exc)
+    except Exception:
+        logger.exception("Erro ao inserir fatura na DB no fluxo email")
         raise HTTPException(
             status_code=500,
             detail="Erro interno ao guardar a fatura na base de dados.",

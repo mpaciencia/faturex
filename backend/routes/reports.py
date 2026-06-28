@@ -186,8 +186,8 @@ def _build_relatorio_response(data_inicio: date, data_fim: date) -> StreamingRes
             data_inicio=data_inicio.isoformat(),
             data_fim=data_fim.isoformat(),
         )
-    except Exception as exc:
-        logger.error("Erro ao consultar faturas: %s", exc)
+    except Exception:
+        logger.exception("Erro ao consultar faturas para relatório Excel")
         raise HTTPException(
             status_code=500,
             detail="Erro interno ao consultar faturas.",
@@ -223,6 +223,7 @@ async def gerar_relatorio(
     data_inicio: date = Query(..., description="Data de início (YYYY-MM-DD)"),
     data_fim: date = Query(..., description="Data de fim (YYYY-MM-DD)"),
 ):
+    logger.info("Recebida requisição GET /excel para gerar relatório no período: %s a %s", data_inicio, data_fim)
     """
     Fluxo C — Geração de relatório Excel.
 
@@ -244,8 +245,8 @@ def _build_zip_response(data_inicio: date, data_fim: date) -> StreamingResponse:
             data_inicio=data_inicio.isoformat(),
             data_fim=data_fim.isoformat(),
         )
-    except Exception as exc:
-        logger.error("Erro ao consultar faturas: %s", exc)
+    except Exception:
+        logger.exception("Erro ao consultar faturas para arquivo ZIP")
         raise HTTPException(
             status_code=500,
             detail="Erro interno ao consultar faturas.",
@@ -273,8 +274,8 @@ def _build_zip_response(data_inicio: date, data_fim: date) -> StreamingResponse:
                 archive.writestr(storage_path, documento_bytes)
     except HTTPException:
         raise
-    except Exception as exc:
-        logger.error("Erro ao gerar ZIP: %s", exc)
+    except Exception:
+        logger.exception("Erro ao gerar arquivo ZIP de faturas")
         raise HTTPException(
             status_code=500,
             detail="Erro interno ao gerar o ficheiro ZIP.",
@@ -297,4 +298,5 @@ async def gerar_zip(
     data_inicio: date = Query(..., description="Data de início (YYYY-MM-DD)"),
     data_fim: date = Query(..., description="Data de fim (YYYY-MM-DD)"),
 ):
+    logger.info("Recebida requisição GET /zip para gerar pacote de faturas no período: %s a %s", data_inicio, data_fim)
     return _build_zip_response(data_inicio, data_fim)

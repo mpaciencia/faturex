@@ -33,12 +33,18 @@ def insert_fatura(data: dict) -> dict:
     Raises:
         Exception: Se a inserção falhar no Supabase.
     """
-    response = _client.table(_TABLE).insert(data).execute()
+    try:
+        logger.info("A tentar inserir fatura no Supabase (ATCUD: %s)", data.get("atcud"))
+        response = _client.table(_TABLE).insert(data).execute()
 
-    if not response.data:
-        raise Exception("Falha ao inserir fatura no Supabase: resposta vazia.")
+        if not response.data:
+            raise Exception("Falha ao inserir fatura no Supabase: resposta vazia.")
 
-    return response.data[0]
+        logger.info("Fatura inserida com sucesso no Supabase (ATCUD: %s)", data.get("atcud"))
+        return response.data[0]
+    except Exception:
+        logger.exception("Erro ao inserir fatura no Supabase (ATCUD: %s)", data.get("atcud"))
+        raise
 
 
 def fatura_exists(atcud: str) -> bool:
@@ -51,14 +57,21 @@ def fatura_exists(atcud: str) -> bool:
     Returns:
         True se a fatura já existir, False caso contrário.
     """
-    response = (
-        _client.table(_TABLE)
-        .select("id")
-        .eq("atcud", atcud)
-        .limit(1)
-        .execute()
-    )
-    return len(response.data) > 0
+    try:
+        logger.info("A verificar se fatura já existe no Supabase (ATCUD: %s)", atcud)
+        response = (
+            _client.table(_TABLE)
+            .select("id")
+            .eq("atcud", atcud)
+            .limit(1)
+            .execute()
+        )
+        exists = len(response.data) > 0
+        logger.info("Verificação de existência de fatura concluída (ATCUD: %s, Existe: %s)", atcud, exists)
+        return exists
+    except Exception:
+        logger.exception("Erro ao verificar existência da fatura no Supabase (ATCUD: %s)", atcud)
+        raise
 
 
 def upload_documento(path: str, content: bytes, content_type: str) -> str:
@@ -76,15 +89,21 @@ def upload_documento(path: str, content: bytes, content_type: str) -> str:
     Raises:
         Exception: Se o upload falhar.
     """
-    _client.storage.from_(_BUCKET).upload(
-        path=path,
-        file=content,
-        file_options={"content-type": content_type},
-    )
+    try:
+        logger.info("A iniciar upload de documento para Supabase Storage (path: %s, tipo: %s)", path, content_type)
+        _client.storage.from_(_BUCKET).upload(
+            path=path,
+            file=content,
+            file_options={"content-type": content_type},
+        )
 
-    # Obter URL pública do ficheiro
-    url_response = _client.storage.from_(_BUCKET).get_public_url(path)
-    return url_response
+        # Obter URL pública do ficheiro
+        url_response = _client.storage.from_(_BUCKET).get_public_url(path)
+        logger.info("Upload de documento concluído com sucesso (URL: %s)", url_response)
+        return url_response
+    except Exception:
+        logger.exception("Erro no upload do documento para o Supabase Storage (path: %s)", path)
+        raise
 
 
 def download_documento(path: str) -> bytes:
@@ -97,18 +116,26 @@ def download_documento(path: str) -> bytes:
     Returns:
         Bytes do ficheiro descarregado.
     """
-    response = _client.storage.from_(_BUCKET).download(path)
+    try:
+        logger.info("A iniciar download de documento do Supabase Storage (path: %s)", path)
+        response = _client.storage.from_(_BUCKET).download(path)
 
-    if isinstance(response, bytes):
-        return response
+        data_bytes = None
+        if isinstance(response, bytes):
+            data_bytes = response
+        elif hasattr(response, "data") and isinstance(response.data, (bytes, bytearray)):
+            data_bytes = bytes(response.data)
+        elif hasattr(response, "content") and isinstance(response.content, (bytes, bytearray)):
+            data_bytes = bytes(response.content)
 
-    if hasattr(response, "data") and isinstance(response.data, (bytes, bytearray)):
-        return bytes(response.data)
+        if data_bytes is not None:
+            logger.info("Download concluído com sucesso (%d bytes)", len(data_bytes))
+            return data_bytes
 
-    if hasattr(response, "content") and isinstance(response.content, (bytes, bytearray)):
-        return bytes(response.content)
-
-    raise Exception(f"Falha ao descarregar documento do Supabase: {path}")
+        raise Exception(f"Falha ao descarregar documento do Supabase: {path}")
+    except Exception:
+        logger.exception("Erro ao transferir documento do Supabase Storage (path: %s)", path)
+        raise
 
 
 def storage_path_from_public_url(url: str) -> str:
@@ -135,12 +162,18 @@ def get_faturas_by_period(data_inicio: str, data_fim: str) -> list:
     Returns:
         Lista de dicionários com os registos das faturas.
     """
-    response = (
-        _client.table(_TABLE)
-        .select("*")
-        .gte("data_fatura", data_inicio)
-        .lte("data_fatura", data_fim)
-        .order("data_fatura")
-        .execute()
-    )
-    return response.data
+    try:
+        logger.info("A consultar faturas no Supabase no intervalo: %s a %s", data_inicio, data_fim)
+        response = (
+            _client.table(_TABLE)
+            .select("*")
+            .gte("data_fatura", data_inicio)
+            .lte("data_fatura", data_fim)
+            .order("data_fatura")
+            .execute()
+        )
+        logger.info("Consulta ao Supabase concluída. Encontradas %d faturas", len(response.data))
+        return response.data
+    except Exception:
+        logger.exception("Erro ao obter faturas por período do Supabase (%s a %s)", data_inicio, data_fim)
+        raise

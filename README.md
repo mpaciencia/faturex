@@ -36,7 +36,7 @@ backend/
 │   ├── supabase_client.py   # Wrapper Supabase (DB + Storage)
 │   ├── qr_parser.py         # Parse QR Code AT → campos estruturados
 │   ├── pdf_processor.py     # Extração QR de PDFs (PyMuPDF + pyzbar)
-│   ├── gemini_client.py     # Chamada Groq API para categorização
+│   ├── ai_client.py         # Chamada de API de IA (ex: Groq) para categorização
 │   └── nif_service.py       # Consulta de nome de empresa na API NIF.pt
 ├── models/
 │   └── schemas.py           # Modelos Pydantic
