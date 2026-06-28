@@ -17,6 +17,9 @@ env/
 .env
 .env.*
 
+# Sessions
+sessions/
+
 # IDE
 .vscode/
 .idea/
