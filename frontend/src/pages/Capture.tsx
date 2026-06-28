@@ -24,12 +24,55 @@ export function Capture() {
   const [observacoes, setObservacoes] = useState("");
   const [successResult, setSuccessResult] = useState<{ id: string; categoria: string } | null>(null);
 
+  // Camera selection (avoids virtual/continuity cameras that send split/combined feeds)
+  const [availableCameras, setAvailableCameras] = useState<{ id: string; label: string }[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null);
+
   const html5QrcodeRef = useRef<Html5Qrcode | null>(null);
   const cameraStreamRef = useRef<boolean>(false);
+  const isMounted = useRef<boolean>(true);
+  const timeoutsRef = useRef<any[]>([]);
+
+  // Regex to flag virtual / continuity / screen-sharing style cameras whose
+  // feed can come pre-combined (e.g. Apple Continuity Camera "Desk View",
+  // OBS Virtual Camera, Snap Camera, etc.)
+  const VIRTUAL_CAMERA_PATTERN = /iphone|ipad|continuity|desk view|virtual|obs|snap camera|droidcam|epoccam/i;
+
+  const resolveCameraId = async (overrideId?: string): Promise<string | null> => {
+    try {
+      const cameras = await Html5Qrcode.getCameras();
+      setAvailableCameras(cameras);
+
+      if (!cameras || cameras.length === 0) return null;
+
+      const desiredId = overrideId ?? selectedCameraId;
+
+      // If a specific camera was requested (manual pick or already chosen), respect it.
+      if (desiredId && cameras.some((c) => c.id === desiredId)) {
+        setSelectedCameraId(desiredId);
+        return desiredId;
+      }
+
+      // Prefer rear/back cameras, excluding virtual ones
+      const backCamera = cameras.find((c) => 
+        /back|rear|environment|traseira/i.test(c.label) && !VIRTUAL_CAMERA_PATTERN.test(c.label)
+      );
+      // Fallback to any non-virtual camera
+      const preferred = backCamera ?? cameras.find((c) => !VIRTUAL_CAMERA_PATTERN.test(c.label));
+      const chosen = preferred ?? cameras[0];
+      setSelectedCameraId(chosen.id);
+      return chosen.id;
+    } catch (err) {
+      console.error("Erro ao listar câmaras:", err);
+      return null;
+    }
+  };
 
   // Cleanup camera streams on unmount
   useEffect(() => {
     return () => {
+      isMounted.current = false;
+      timeoutsRef.current.forEach(clearTimeout);
       stopCameraStream();
     };
   }, []);
@@ -48,18 +91,23 @@ export function Capture() {
     if (html5QrcodeRef.current && cameraStreamRef.current) {
       try {
         await html5QrcodeRef.current.stop();
+        html5QrcodeRef.current.clear();
+        html5QrcodeRef.current = null;
       } catch (err) {
         console.error("Erro ao parar a câmara:", err);
       }
       cameraStreamRef.current = false;
     }
-    setIsScanningQr(false);
-    setIsCapturingPhoto(false);
+    if (isMounted.current) {
+      setIsScanningQr(false);
+      setIsCapturingPhoto(false);
+    }
   };
 
   // --- STEP 1: SCAN QR CODE ---
 
-  const startQrScanner = async () => {
+  const startQrScanner = async (cameraOverrideId?: string | React.MouseEvent) => {
+    const validOverrideId = typeof cameraOverrideId === "string" ? cameraOverrideId : undefined;
     setError(null);
     setSuccessResult(null);
     setParsedData(null);
@@ -70,14 +118,19 @@ export function Capture() {
     await stopCameraStream();
 
     setIsScanningQr(true);
+    timeoutsRef.current.forEach(clearTimeout);
+    timeoutsRef.current = [];
     // Let DOM update so the qr-reader container is present
-    setTimeout(async () => {
+    const timeoutId = setTimeout(async () => {
       try {
         const html5Qrcode = new Html5Qrcode("qr-reader");
         html5QrcodeRef.current = html5Qrcode;
 
+        const cameraId = await resolveCameraId(validOverrideId);
+        const cameraConfig: any = cameraId ?? { facingMode: "environment" };
+
         await html5Qrcode.start(
-          { facingMode: "environment" },
+          cameraConfig,
           {
             fps: 10,
             qrbox: (width, height) => {
@@ -99,6 +152,7 @@ export function Capture() {
         setIsScanningQr(false);
       }
     }, 150);
+    timeoutsRef.current.push(timeoutId);
   };
 
   const handleQrDetected = async (qrText: string) => {
@@ -128,14 +182,19 @@ export function Capture() {
     setPreviewUrl(null);
 
     setIsCapturingPhoto(true);
-    setTimeout(async () => {
+    timeoutsRef.current.forEach(clearTimeout);
+    timeoutsRef.current = [];
+    const timeoutId = setTimeout(async () => {
       try {
         const html5Qrcode = new Html5Qrcode("photo-reader");
         html5QrcodeRef.current = html5Qrcode;
 
+        const cameraId = await resolveCameraId();
+        const cameraConfig: any = cameraId ?? { facingMode: "environment" };
+
         // Start display stream
         await html5Qrcode.start(
-          { facingMode: "environment" },
+          cameraConfig,
           {
             fps: 15,
           },
@@ -149,6 +208,7 @@ export function Capture() {
         setIsCapturingPhoto(false);
       }
     }, 150);
+    timeoutsRef.current.push(timeoutId);
   };
 
   const capturePhotoFromStream = async () => {
@@ -170,6 +230,7 @@ export function Capture() {
       ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
       canvas.toBlob(
         async (blob) => {
+          if (!isMounted.current) return;
           if (blob) {
             const file = new File([blob], `fatura_capturada_${Date.now()}.jpg`, {
               type: "image/jpeg",
@@ -293,6 +354,27 @@ export function Capture() {
               {isScanningQr ? (
                 <div className="scanner-container">
                   <div id="qr-reader"></div>
+                  {availableCameras.length > 1 && (
+                    <div className="form-group" style={{ width: "100%" }}>
+                      <label htmlFor="camera-select-qr">Câmara</label>
+                      <select
+                        id="camera-select-qr"
+                        className="form-control"
+                        value={selectedCameraId ?? ""}
+                        onChange={async (e) => {
+                          const newId = e.target.value;
+                          await stopCameraStream();
+                          startQrScanner(newId);
+                        }}
+                      >
+                        {availableCameras.map((cam) => (
+                          <option key={cam.id} value={cam.id}>
+                            {cam.label || cam.id}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div style={{ textAlign: "center", padding: "20px 0" }}>
