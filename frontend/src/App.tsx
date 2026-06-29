@@ -39,16 +39,16 @@ function App() {
           <Camera size={20} />
           <span>Faturex</span>
         </div>
-        
+
         {!isConfigured && (
-          <div 
+          <div
             onClick={() => setActiveTab("settings")}
-            style={{ 
-              display: "flex", 
-              alignItems: "center", 
-              gap: "6px", 
-              fontSize: "0.8rem", 
-              color: "var(--error)", 
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "0.8rem",
+              color: "var(--error)",
               cursor: "pointer",
               background: "rgba(244, 63, 94, 0.1)",
               padding: "4px 8px",
