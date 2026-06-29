@@ -1,0 +1,22 @@
+{
+  "short_name": "FatureX",
+  "name": "FatureX - Digitalizador de Faturas",
+  "description": "Digitalize faturas e envie-as de forma simples.",
+  "icons": [
+    {
+      "src": "/FatureX-logo-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/FatureX-logo-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0b0f19",
+  "theme_color": "#6366f1",
+  "display": "standalone",
+  "orientation": "portrait"
+}
