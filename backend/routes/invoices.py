@@ -9,7 +9,8 @@ import logging
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from .deps import get_current_user
 
 from models.schemas import FaturaCreateResponse, QRDataPayload, TIPOS_VALIDOS
 from services import ai_client, supabase_client
@@ -22,19 +23,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/faturas", tags=["Faturas"])
 
 
-def _build_storage_path(origem: str, data_fatura: str, atcud: str, ext: str) -> str:
+def _build_storage_path(origem: str, data_fatura: str, atcud: str, ext: str, user_id: str) -> str:
     """
-    Constrói o path no Storage: {origem}/{ano}/{mes}/{atcud}.{ext}
+    Constrói o path no Storage: {user_id}/{origem}/{ano}/{mes}/{atcud}.{ext}
 
     Args:
         origem: 'Mobile' ou 'Email'.
         data_fatura: Data no formato 'YYYY-MM-DD'.
         atcud: Código único AT.
         ext: Extensão do ficheiro (sem ponto).
+        user_id: ID do utilizador dono do ficheiro.
     """
     ano = data_fatura[:4]
     mes = data_fatura[5:7]
-    return f"{origem}/{ano}/{mes}/{atcud}.{ext}"
+    return f"{user_id}/{origem}/{ano}/{mes}/{atcud}.{ext}"
 
 
 @router.post("/mobile", response_model=FaturaCreateResponse, status_code=201)
@@ -43,8 +45,10 @@ async def criar_fatura_mobile(
     tipo: str = Form(...),
     observacoes: Optional[str] = Form(None),
     file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
 ):
-    logger.info("Recebida requisição POST /mobile para criar fatura.")
+    user_id = current_user.id
+    logger.info("Recebida requisição POST /mobile para criar fatura. User: %s", user_id)
     """
     Fluxo A — App Mobile.
 
@@ -79,7 +83,7 @@ async def criar_fatura_mobile(
 
     # --- Verificar duplicado ---
     try:
-        if supabase_client.fatura_exists(qr_payload.atcud):
+        if supabase_client.fatura_exists(qr_payload.atcud, user_id):
             raise HTTPException(
                 status_code=409,
                 detail=f"Fatura com ATCUD '{qr_payload.atcud}' já existe.",
@@ -114,7 +118,7 @@ async def criar_fatura_mobile(
         data_fatura_iso = data_fatura_raw
 
     # --- Upload para Storage ---
-    storage_path = _build_storage_path("Mobile", data_fatura_iso, qr_payload.atcud, ext)
+    storage_path = _build_storage_path("Mobile", data_fatura_iso, qr_payload.atcud, ext, user_id)
 
     try:
         url_documento = supabase_client.upload_documento(
@@ -151,7 +155,7 @@ async def criar_fatura_mobile(
     }
 
     try:
-        registo = supabase_client.insert_fatura(fatura_data)
+        registo = supabase_client.insert_fatura(fatura_data, user_id)
     except Exception:
         logger.exception("Erro ao inserir fatura na DB no fluxo mobile")
         raise HTTPException(
@@ -166,8 +170,10 @@ async def criar_fatura_mobile(
 async def criar_fatura_email(
     tipo: str = Form(...),
     file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
 ):
-    logger.info("Recebida requisição POST /email para processar PDF da fatura.")
+    user_id = current_user.id
+    logger.info("Recebida requisição POST /email para processar PDF da fatura. User: %s", user_id)
     """
     Fluxo B — Gmail / Google Apps Script.
 
@@ -214,7 +220,7 @@ async def criar_fatura_email(
 
     # --- Verificar duplicado ---
     try:
-        if supabase_client.fatura_exists(atcud):
+        if supabase_client.fatura_exists(atcud, user_id):
             raise HTTPException(
                 status_code=409,
                 detail=f"Fatura com ATCUD '{atcud}' já existe.",
@@ -229,7 +235,7 @@ async def criar_fatura_email(
         )
 
     # --- Upload do PDF original para Storage ---
-    storage_path = _build_storage_path("Email", data_fatura, atcud, "pdf")
+    storage_path = _build_storage_path("Email", data_fatura, atcud, "pdf", user_id)
 
     try:
         url_documento = supabase_client.upload_documento(
@@ -265,7 +271,7 @@ async def criar_fatura_email(
     }
 
     try:
-        registo = supabase_client.insert_fatura(fatura_data)
+        registo = supabase_client.insert_fatura(fatura_data, user_id)
     except Exception:
         logger.exception("Erro ao inserir fatura na DB no fluxo email")
         raise HTTPException(

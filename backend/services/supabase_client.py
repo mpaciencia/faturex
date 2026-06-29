@@ -20,12 +20,13 @@ _TABLE = "faturas"
 _BUCKET = "documentos"
 
 
-def insert_fatura(data: dict) -> dict:
+def insert_fatura(data: dict, user_id: str) -> dict:
     """
     Insere um registo na tabela 'faturas'.
 
     Args:
         data: Dicionário com os campos da fatura (correspondentes às colunas da tabela).
+        user_id: ID do utilizador dono da fatura.
 
     Returns:
         Dicionário com o registo inserido (inclui 'id' gerado pelo Supabase).
@@ -34,7 +35,8 @@ def insert_fatura(data: dict) -> dict:
         Exception: Se a inserção falhar no Supabase.
     """
     try:
-        logger.info("A tentar inserir fatura no Supabase (ATCUD: %s)", data.get("atcud"))
+        logger.info("A tentar inserir fatura no Supabase (ATCUD: %s, User: %s)", data.get("atcud"), user_id)
+        data["user_id"] = user_id
         response = _client.table(_TABLE).insert(data).execute()
 
         if not response.data:
@@ -47,22 +49,24 @@ def insert_fatura(data: dict) -> dict:
         raise
 
 
-def fatura_exists(atcud: str) -> bool:
+def fatura_exists(atcud: str, user_id: str) -> bool:
     """
-    Verifica se já existe uma fatura com o ATCUD fornecido.
+    Verifica se já existe uma fatura com o ATCUD fornecido para o utilizador.
 
     Args:
         atcud: Código único AT da fatura.
+        user_id: ID do utilizador.
 
     Returns:
-        True se a fatura já existir, False caso contrário.
+        True se a fatura já existir para este utilizador, False caso contrário.
     """
     try:
-        logger.info("A verificar se fatura já existe no Supabase (ATCUD: %s)", atcud)
+        logger.info("A verificar se fatura já existe no Supabase (ATCUD: %s, User: %s)", atcud, user_id)
         response = (
             _client.table(_TABLE)
             .select("id")
             .eq("atcud", atcud)
+            .eq("user_id", user_id)
             .limit(1)
             .execute()
         )
@@ -151,24 +155,26 @@ def storage_path_from_public_url(url: str) -> str:
     return parsed.path.split(marker, 1)[1].split("/", 1)[1]
 
 
-def get_faturas_by_period(data_inicio: str, data_fim: str) -> list:
+def get_faturas_by_period(data_inicio: str, data_fim: str, user_id: str) -> list:
     """
-    Consulta faturas filtradas por intervalo de data_fatura (inclusive).
+    Consulta faturas filtradas por intervalo de data_fatura (inclusive) e utilizador.
 
     Args:
         data_inicio: Data de início no formato 'YYYY-MM-DD'.
         data_fim: Data de fim no formato 'YYYY-MM-DD'.
+        user_id: ID do utilizador.
 
     Returns:
         Lista de dicionários com os registos das faturas.
     """
     try:
-        logger.info("A consultar faturas no Supabase no intervalo: %s a %s", data_inicio, data_fim)
+        logger.info("A consultar faturas no Supabase no intervalo: %s a %s, User: %s", data_inicio, data_fim, user_id)
         response = (
             _client.table(_TABLE)
             .select("*")
             .gte("data_fatura", data_inicio)
             .lte("data_fatura", data_fim)
+            .eq("user_id", user_id)
             .order("data_fatura")
             .execute()
         )
@@ -176,4 +182,33 @@ def get_faturas_by_period(data_inicio: str, data_fim: str) -> list:
         return response.data
     except Exception:
         logger.exception("Erro ao obter faturas por período do Supabase (%s a %s)", data_inicio, data_fim)
+        raise
+
+
+def authenticate_user(email: str, password: str):
+    """
+    Autentica um utilizador com email e password no Supabase Auth.
+    """
+    try:
+        logger.info("A tentar autenticar utilizador: %s", email)
+        response = _client.auth.sign_in_with_password({
+            "email": email,
+            "password": password
+        })
+        return response
+    except Exception:
+        logger.exception("Erro ao autenticar utilizador: %s", email)
+        raise
+
+
+def get_user_from_token(token: str):
+    """
+    Obtém o utilizador correspondente ao JWT fornecido.
+    Valida o token com o servidor do Supabase.
+    """
+    try:
+        response = _client.auth.get_user(token)
+        return response.user
+    except Exception:
+        logger.exception("Erro ao validar token JWT")
         raise

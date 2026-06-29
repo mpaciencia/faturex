@@ -4,12 +4,12 @@ Entrada FastAPI — registo de routers, middleware de autenticação, CORS.
 
 import logging
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import APIKeyHeader
 
 from config import settings
-from routes import invoices, reports
+from routes import invoices, reports, auth
+from routes.deps import get_current_user
 
 # ---------------------------------------------------------------------------
 # Configuração de Logging para o Render
@@ -32,34 +32,17 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ---------------------------------------------------------------------------
-# Autenticação por API Key (header X-API-Key)
+# Registo dos routers (públicos e autenticados)
 # ---------------------------------------------------------------------------
-_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
-
-
-async def _verify_api_key(api_key: str = Depends(_api_key_header)):
-    """
-    Dependency global que valida a API Key em todas as rotas.
-    Responde 401 Unauthorized se a chave estiver ausente ou incorreta.
-    """
-    if not api_key or api_key != settings.API_KEY:
-        raise HTTPException(
-            status_code=401,
-            detail="Unauthorized — chave API inválida ou ausente.",
-        )
-
-
-# ---------------------------------------------------------------------------
-# Registo dos routers com dependency global de autenticação
-# ---------------------------------------------------------------------------
-app.include_router(invoices.router, dependencies=[Depends(_verify_api_key)])
-app.include_router(reports.router, dependencies=[Depends(_verify_api_key)])
+app.include_router(auth.router)
+app.include_router(invoices.router, dependencies=[Depends(get_current_user)])
+app.include_router(reports.router, dependencies=[Depends(get_current_user)])
 
 
 @app.get("/", tags=["Health"])

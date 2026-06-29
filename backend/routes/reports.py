@@ -11,7 +11,8 @@ from decimal import Decimal
 from urllib.parse import unquote
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from .deps import get_current_user
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
@@ -174,7 +175,7 @@ def _build_sheet(
     ws.column_dimensions["G"].width = 30
 
 
-def _build_relatorio_response(data_inicio: date, data_fim: date) -> StreamingResponse:
+def _build_relatorio_response(data_inicio: date, data_fim: date, user_id: str) -> StreamingResponse:
     if data_inicio > data_fim:
         raise HTTPException(
             status_code=400,
@@ -185,6 +186,7 @@ def _build_relatorio_response(data_inicio: date, data_fim: date) -> StreamingRes
         faturas = supabase_client.get_faturas_by_period(
             data_inicio=data_inicio.isoformat(),
             data_fim=data_fim.isoformat(),
+            user_id=user_id,
         )
     except Exception:
         logger.exception("Erro ao consultar faturas para relatório Excel")
@@ -222,18 +224,20 @@ def _build_relatorio_response(data_inicio: date, data_fim: date) -> StreamingRes
 async def gerar_relatorio(
     data_inicio: date = Query(..., description="Data de início (YYYY-MM-DD)"),
     data_fim: date = Query(..., description="Data de fim (YYYY-MM-DD)"),
+    current_user=Depends(get_current_user),
 ):
-    logger.info("Recebida requisição GET /excel para gerar relatório no período: %s a %s", data_inicio, data_fim)
+    user_id = current_user.id
+    logger.info("Recebida requisição GET /excel para gerar relatório no período: %s a %s. User: %s", data_inicio, data_fim, user_id)
     """
     Fluxo C — Geração de relatório Excel.
 
     Query params: data_inicio e data_fim no formato YYYY-MM-DD.
     Devolve ficheiro .xlsx com folhas 'Despesas' e 'Receitas'.
     """
-    return _build_relatorio_response(data_inicio, data_fim)
+    return _build_relatorio_response(data_inicio, data_fim, user_id)
 
 
-def _build_zip_response(data_inicio: date, data_fim: date) -> StreamingResponse:
+def _build_zip_response(data_inicio: date, data_fim: date, user_id: str) -> StreamingResponse:
     if data_inicio > data_fim:
         raise HTTPException(
             status_code=400,
@@ -244,6 +248,7 @@ def _build_zip_response(data_inicio: date, data_fim: date) -> StreamingResponse:
         faturas = supabase_client.get_faturas_by_period(
             data_inicio=data_inicio.isoformat(),
             data_fim=data_fim.isoformat(),
+            user_id=user_id,
         )
     except Exception:
         logger.exception("Erro ao consultar faturas para arquivo ZIP")
@@ -297,6 +302,8 @@ def _build_zip_response(data_inicio: date, data_fim: date) -> StreamingResponse:
 async def gerar_zip(
     data_inicio: date = Query(..., description="Data de início (YYYY-MM-DD)"),
     data_fim: date = Query(..., description="Data de fim (YYYY-MM-DD)"),
+    current_user=Depends(get_current_user),
 ):
-    logger.info("Recebida requisição GET /zip para gerar pacote de faturas no período: %s a %s", data_inicio, data_fim)
-    return _build_zip_response(data_inicio, data_fim)
+    user_id = current_user.id
+    logger.info("Recebida requisição GET /zip para gerar pacote de faturas no período: %s a %s. User: %s", data_inicio, data_fim, user_id)
+    return _build_zip_response(data_inicio, data_fim, user_id)
