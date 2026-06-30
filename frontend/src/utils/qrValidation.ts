@@ -105,6 +105,10 @@ export function parseAtQrString(rawQr: string): AtQrPayload {
     throw new QrValidationError("Campo 'H' (ATCUD) vazio.");
   }
 
+  if (!/^[A-Za-z0-9\-]+$/.test(parsed.H)) {
+    throw new QrValidationError(`Campo 'H' (ATCUD) inválido: '${parsed.H}'. Deve conter apenas letras, números e hífens.`);
+  }
+
   const valorTotal = normalizeAmount(parsed.O);
   const impostoTotal = normalizeAmount(parsed.N);
 

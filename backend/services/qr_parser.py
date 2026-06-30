@@ -92,6 +92,13 @@ def parse_qr_string(raw_qr: str) -> dict:
     atcud = campos.get("H")
     if not atcud:
         raise QRParseError("Campo obrigatório 'H' (ATCUD) ausente no QR Code.")
+    
+    import re
+    if not re.match(r"^[A-Za-z0-9\-]+$", atcud):
+        raise QRParseError(
+            f"Campo 'H' (ATCUD) inválido: '{atcud}'. "
+            "Deve conter apenas letras, números e hífens."
+        )
 
     # --- Valor total do documento (campo O: conforme especificação AT) ---
     valor_total_raw = campos.get("O")

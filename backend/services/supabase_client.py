@@ -14,6 +14,11 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+# AVISO DE SEGURANÇA / NOTA DE ARQUITETURA:
+# O cliente é inicializado com a SUPABASE_KEY (service role key), o que significa que
+# ignora as políticas de RLS (Row Level Security) definidas no banco de dados e no Storage.
+# Por conseguinte, o isolamento dos dados de cada utilizador baseia-se inteiramente nos
+# filtros aplicados pela aplicação Python (ex: filtragem explícita com `.eq("user_id", user_id)`).
 _client: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
 
 _TABLE = "faturas"
@@ -146,13 +151,29 @@ def storage_path_from_public_url(url: str) -> str:
     """
     Extrai o path do objeto a partir de uma URL pública do Supabase Storage.
     """
-    parsed = urlparse(url)
-    marker = "/object/public/"
+    if not url:
+        raise ValueError("URL de documento vazia.")
+    try:
+        parsed = urlparse(url)
+        marker = "/object/public/"
 
-    if marker not in parsed.path:
-        raise ValueError(f"URL de documento inválida: {url}")
+        if marker not in parsed.path:
+            raise ValueError(f"URL de documento inválida (marcador ausente): {url}")
 
-    return parsed.path.split(marker, 1)[1].split("/", 1)[1]
+        parts = parsed.path.split(marker, 1)
+        if len(parts) < 2:
+            raise ValueError(f"URL de documento inválida (formato incorreto): {url}")
+
+        object_part = parts[1]
+        object_split = object_part.split("/", 1)
+        if len(object_split) < 2:
+            raise ValueError(f"URL de documento inválida (sem caminho do objeto): {url}")
+
+        return object_split[1]
+    except Exception as exc:
+        if isinstance(exc, ValueError):
+            raise
+        raise ValueError(f"Erro ao analisar URL do documento: {exc}")
 
 
 def get_faturas_by_period(data_inicio: str, data_fim: str, user_id: str) -> list:

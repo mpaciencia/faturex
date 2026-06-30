@@ -6,6 +6,7 @@ Gera ficheiro .xlsx com openpyxl, organizado por Despesas e Receitas.
 
 import io
 import logging
+import re
 from datetime import date
 from decimal import Decimal
 from urllib.parse import unquote
@@ -237,6 +238,16 @@ async def gerar_relatorio(
     return _build_relatorio_response(data_inicio, data_fim, user_id)
 
 
+def _sanitise_filename_part(part: str) -> str:
+    if not part:
+        return ""
+    # Substitui caracteres inválidos por nada ou hífen/underscore
+    cleaned = re.sub(r'[\\/*?:"<>|]', "", part)
+    # Substitui sequências de espaços/newlines por um único underscore
+    cleaned = re.sub(r'\s+', "_", cleaned)
+    return cleaned.strip()
+
+
 def _build_zip_response(data_inicio: date, data_fim: date, user_id: str) -> StreamingResponse:
     if data_inicio > data_fim:
         raise HTTPException(
@@ -258,27 +269,52 @@ def _build_zip_response(data_inicio: date, data_fim: date, user_id: str) -> Stre
         )
 
     zip_buffer = io.BytesIO()
+    errors_log = []
+    used_filenames = set()
 
     try:
         with ZipFile(zip_buffer, mode="w", compression=ZIP_DEFLATED) as archive:
             for index, fatura in enumerate(faturas, start=1):
-                url_documento = fatura.get("url_documento")
-                if not isinstance(url_documento, str) or not url_documento.strip():
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Fatura sem URL de documento associada.",
-                    )
+                atcud = fatura.get("atcud", f"DESCONHECIDO_{index}")
+                try:
+                    url_documento = fatura.get("url_documento")
+                    if not isinstance(url_documento, str) or not url_documento.strip():
+                        raise ValueError("Fatura sem URL de documento associada.")
 
-                storage_path = supabase_client.storage_path_from_public_url(url_documento)
-                documento_bytes = supabase_client.download_documento(storage_path)
+                    storage_path = supabase_client.storage_path_from_public_url(url_documento)
+                    documento_bytes = supabase_client.download_documento(storage_path)
 
-                nome_arquivo = unquote(storage_path.split("/")[-1])
-                if not nome_arquivo:
-                    nome_arquivo = f"fatura_{index}"
+                    ext = "pdf"
+                    if "." in storage_path:
+                        ext = storage_path.split(".")[-1].lower()
 
-                archive.writestr(storage_path, documento_bytes)
-    except HTTPException:
-        raise
+                    nome_emissor = fatura.get("nome_emissor")
+                    nif_emissor = fatura.get("nif_emissor")
+                    data_fatura = fatura.get("data_fatura") or "data_desconhecida"
+
+                    if nome_emissor:
+                        base_name = f"{_sanitise_filename_part(nome_emissor)}_{data_fatura}"
+                    else:
+                        base_name = f"NIF{nif_emissor}_{data_fatura}"
+
+                    final_name = f"{base_name}.{ext}"
+                    counter = 1
+                    while final_name.lower() in used_filenames:
+                        final_name = f"{base_name}_{counter}.{ext}"
+                        counter += 1
+
+                    used_filenames.add(final_name.lower())
+                    archive.writestr(final_name, documento_bytes)
+
+                except Exception as exc:
+                    err_msg = f"Erro ao processar fatura ATCUD {atcud}: {str(exc)}"
+                    logger.error(err_msg)
+                    errors_log.append(err_msg)
+
+            if errors_log:
+                errors_content = "\n".join(errors_log)
+                archive.writestr("_erros.txt", errors_content.encode("utf-8"))
+
     except Exception:
         logger.exception("Erro ao gerar arquivo ZIP de faturas")
         raise HTTPException(

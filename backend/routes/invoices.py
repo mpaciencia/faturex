@@ -4,8 +4,10 @@ Rotas de faturas — POST /api/faturas/mobile e POST /api/faturas/email.
 Os routers apenas orquestram serviços. Nenhuma lógica de negócio aqui.
 """
 
+import asyncio
 import json
 import logging
+import re
 from decimal import Decimal
 from typing import Optional
 
@@ -34,6 +36,11 @@ def _build_storage_path(origem: str, data_fatura: str, atcud: str, ext: str, use
         ext: Extensão do ficheiro (sem ponto).
         user_id: ID do utilizador dono do ficheiro.
     """
+    if not re.match(r"^[A-Za-z0-9\-]+$", atcud):
+        raise HTTPException(
+            status_code=400,
+            detail="Código ATCUD inválido para armazenamento (path traversal detectado)."
+        )
     ano = data_fatura[:4]
     mes = data_fatura[5:7]
     return f"{user_id}/{origem}/{ano}/{mes}/{atcud}.{ext}"
@@ -135,7 +142,7 @@ async def criar_fatura_mobile(
 
     # --- Inferir categoria via AI (Groq/Llama) ---
     categoria = ai_client.inferir_categoria(file_bytes, mime_type=content_type)
-    nome_emissor = get_nome_emissor(qr_payload.nif_emissor)
+    nome_emissor = await asyncio.to_thread(get_nome_emissor, qr_payload.nif_emissor)
     observacoes_limpa = observacoes.strip() if observacoes and observacoes.strip() else None
 
     # --- Inserir na DB ---
@@ -252,7 +259,7 @@ async def criar_fatura_email(
 
     # --- Inferir categoria via AI (Groq/Llama) (usando PNG da primeira página) ---
     categoria = ai_client.inferir_categoria(png_bytes, mime_type="image/png")
-    nome_emissor = get_nome_emissor(qr_data["nif_emissor"])
+    nome_emissor = await asyncio.to_thread(get_nome_emissor, qr_data["nif_emissor"])
 
     # --- Inserir na DB ---
     fatura_data = {

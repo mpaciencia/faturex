@@ -35,7 +35,7 @@ class LoggingFlowTests(unittest.TestCase):
         mock_sb_client.table.return_value.insert.return_value.execute.return_value = mock_response
 
         with self.assertLogs("services.supabase_client", level="INFO") as log_capture:
-            res = supabase_client.insert_fatura({"atcud": "ATCUD-TEST-123", "tipo": "Despesa"})
+            res = supabase_client.insert_fatura({"atcud": "ATCUD-TEST-123", "tipo": "Despesa"}, "test-user-id")
 
         self.assertEqual(res["id"], 123)
         self.assertTrue(
@@ -81,7 +81,7 @@ class LoggingFlowTests(unittest.TestCase):
 
         with self.assertRaises(Exception):
             with self.assertLogs("services.supabase_client", level="ERROR") as log_capture:
-                supabase_client.insert_fatura({"atcud": "ATCUD-ERROR", "tipo": "Despesa"})
+                supabase_client.insert_fatura({"atcud": "ATCUD-ERROR", "tipo": "Despesa"}, "test-user-id")
 
         self.assertTrue(
             any("Erro ao inserir fatura no Supabase" in log for log in log_capture.output)
