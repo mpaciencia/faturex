@@ -37,8 +37,9 @@ class PDFProcessingError(Exception):
 
 def extract_qr_from_pdf(pdf_bytes: bytes) -> tuple[str, bytes]:
     """
-    Renderiza a primeira página do PDF como imagem PNG em memória
-    e decodifica o QR Code presente na imagem.
+    Renderiza as páginas do PDF como imagem PNG em memória, procura um QR Code nelas
+    e devolve a string bruta do QR Code e os bytes da imagem PNG da página onde
+    o QR Code foi detectado.
 
     Args:
         pdf_bytes: Conteúdo binário do ficheiro PDF.
@@ -46,7 +47,7 @@ def extract_qr_from_pdf(pdf_bytes: bytes) -> tuple[str, bytes]:
     Returns:
         Tuplo (qr_string, png_bytes):
             - qr_string: String bruta decodificada do QR Code.
-            - png_bytes: Bytes da imagem PNG da primeira página.
+            - png_bytes: Bytes da imagem PNG da página onde o QR Code foi encontrado.
 
     Raises:
         PDFProcessingError: Se o PDF não puder ser aberto, não tiver páginas,
@@ -69,31 +70,24 @@ def extract_qr_from_pdf(pdf_bytes: bytes) -> tuple[str, bytes]:
 
     logger.info("PDF aberto com sucesso. Número de páginas: %d", doc.page_count)
     try:
-        # Renderizar a primeira página como pixmap com resolução suficiente para QR
-        try:
-            page = doc[0]
-            # DPI elevado (300) para garantir legibilidade do QR Code
-            mat = fitz.Matrix(300 / 72, 300 / 72)
-            pix = page.get_pixmap(matrix=mat)
-        except Exception as exc:
-            logger.exception("Erro ao obter pixmap da primeira página do PDF")
-            raise PDFProcessingError(
-                f"Erro ao renderizar a primeira página do PDF: {exc}"
-            )
-
-        # Converter pixmap da primeira página para bytes PNG em memória
-        png_bytes = pix.tobytes(output="png")
-
-        # Procurar o QR em todas as páginas; alguns PDFs incluem a capa na primeira.
+        # Procurar o QR em todas as páginas
         qr_string = ""
+        png_bytes = None
         qr_detector = cv2.QRCodeDetector() if cv2 is not None else None
 
         for page_index in range(doc.page_count):
             logger.info("A tentar extrair QR Code da página %d", page_index + 1)
-            page = doc[page_index]
-            mat = fitz.Matrix(300 / 72, 300 / 72)
-            pix = page.get_pixmap(matrix=mat)
-            image_bytes = pix.tobytes(output="png")
+            try:
+                page = doc[page_index]
+                # DPI elevado (300) para garantir legibilidade do QR Code
+                mat = fitz.Matrix(300 / 72, 300 / 72)
+                pix = page.get_pixmap(matrix=mat)
+                image_bytes = pix.tobytes(output="png")
+            except Exception as exc:
+                logger.exception("Erro ao renderizar a página %d do PDF", page_index + 1)
+                continue  # tenta a próxima página se a renderização desta falhar
+
+            found_qr = False
 
             if qr_detector is not None and np is not None:
                 image_array = np.frombuffer(image_bytes, dtype=np.uint8)
@@ -102,18 +96,24 @@ def extract_qr_from_pdf(pdf_bytes: bytes) -> tuple[str, bytes]:
                     decoded_text, _, _ = qr_detector.detectAndDecode(image)
                     if decoded_text and decoded_text.strip():
                         qr_string = decoded_text.strip()
+                        png_bytes = image_bytes
                         logger.info("QR Code detetado via OpenCV na página %d", page_index + 1)
-                        break
+                        found_qr = True
 
-            if pyzbar_decode is not None:
+            if not found_qr and pyzbar_decode is not None:
                 image = Image.open(io.BytesIO(image_bytes))
                 decoded_objects = pyzbar_decode(image)
 
                 if decoded_objects:
-                    qr_string = decoded_objects[0].data.decode("utf-8")
-                    if qr_string.strip():
+                    decoded_text = decoded_objects[0].data.decode("utf-8")
+                    if decoded_text.strip():
+                        qr_string = decoded_text.strip()
+                        png_bytes = image_bytes
                         logger.info("QR Code detetado via Pyzbar na página %d", page_index + 1)
-                        break
+                        found_qr = True
+
+            if found_qr:
+                break
 
         if not qr_string.strip():
             logger.warning("Nenhum QR Code encontrado nas páginas do PDF")

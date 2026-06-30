@@ -1,13 +1,10 @@
 import type { AtQrPayload, DocumentType } from "../utils/qrValidation";
 
 export function getApiConfig() {
-  const localUrl = localStorage.getItem("faturex_api_url");
-  const localKey = localStorage.getItem("faturex_api_key");
-  
-  const url = (localUrl || import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
-  const key = (localKey || import.meta.env.VITE_API_KEY || "").trim();
+  const token = localStorage.getItem("faturex_token");
+  const url = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
 
-  return { url, key };
+  return { url, token };
 }
 
 export interface SubmitInvoiceInput {
@@ -20,6 +17,13 @@ export interface SubmitInvoiceInput {
 export interface SubmitInvoiceResult {
   id: string;
   categoria: string;
+}
+
+export interface LoginResult {
+  access_token: string;
+  token_type: string;
+  user_email: string;
+  user_id: string;
 }
 
 function parseBackendError(text: string): string {
@@ -44,20 +48,44 @@ function parseBackendError(text: string): string {
   return text;
 }
 
+export async function login(email: string, password: string): Promise<LoginResult> {
+  const { url } = getApiConfig();
+
+  if (!url) {
+    throw new Error("O URL do servidor API não está configurado no ficheiro .env.");
+  }
+
+  const response = await fetch(`${url}/api/auth/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ email, password }),
+  });
+
+  const responseText = await response.text();
+
+  if (!response.ok) {
+    throw new Error(parseBackendError(responseText) || `Erro HTTP ${response.status}`);
+  }
+
+  return JSON.parse(responseText) as LoginResult;
+}
+
 export async function submitInvoice({
   qrPayload,
   tipo,
   observacoes,
   file,
 }: SubmitInvoiceInput): Promise<SubmitInvoiceResult> {
-  const { url, key } = getApiConfig();
+  const { url, token } = getApiConfig();
 
   if (!url) {
-    throw new Error("O URL do servidor API não está configurado. Aceda às Definições.");
+    throw new Error("O URL do servidor API não está configurado no ficheiro .env.");
   }
 
-  if (!key) {
-    throw new Error("A chave de API não está configurada. Aceda às Definições.");
+  if (!token) {
+    throw new Error("Sessão não iniciada. Por favor, faça login.");
   }
 
   const formData = new FormData();
@@ -69,7 +97,7 @@ export async function submitInvoice({
   const response = await fetch(`${url}/api/faturas/mobile`, {
     method: "POST",
     headers: {
-      "X-API-Key": key,
+      "Authorization": `Bearer ${token}`,
     },
     body: formData,
   });
@@ -84,21 +112,21 @@ export async function submitInvoice({
 }
 
 export async function getExcelReport(startDate: string, endDate: string): Promise<Blob> {
-  const { url, key } = getApiConfig();
+  const { url, token } = getApiConfig();
 
   if (!url) {
-    throw new Error("O URL do servidor API não está configurado. Aceda às Definições.");
+    throw new Error("O URL do servidor API não está configurado no ficheiro .env.");
   }
 
-  if (!key) {
-    throw new Error("A chave de API não está configurada. Aceda às Definições.");
+  if (!token) {
+    throw new Error("Sessão não iniciada. Por favor, faça login.");
   }
 
   const fetchUrl = `${url}/api/relatorios/excel?data_inicio=${startDate}&data_fim=${endDate}`;
   const response = await fetch(fetchUrl, {
     method: "GET",
     headers: {
-      "X-API-Key": key,
+      "Authorization": `Bearer ${token}`,
     },
   });
 
@@ -111,21 +139,21 @@ export async function getExcelReport(startDate: string, endDate: string): Promis
 }
 
 export async function getZipExport(startDate: string, endDate: string): Promise<Blob> {
-  const { url, key } = getApiConfig();
+  const { url, token } = getApiConfig();
 
   if (!url) {
-    throw new Error("O URL do servidor API não está configurado. Aceda às Definições.");
+    throw new Error("O URL do servidor API não está configurado no ficheiro .env.");
   }
 
-  if (!key) {
-    throw new Error("A chave de API não está configurada. Aceda às Definições.");
+  if (!token) {
+    throw new Error("Sessão não iniciada. Por favor, faça login.");
   }
 
   const fetchUrl = `${url}/api/relatorios/zip?data_inicio=${startDate}&data_fim=${endDate}`;
   const response = await fetch(fetchUrl, {
     method: "GET",
     headers: {
-      "X-API-Key": key,
+      "Authorization": `Bearer ${token}`,
     },
   });
 
@@ -136,4 +164,3 @@ export async function getZipExport(startDate: string, endDate: string): Promise<
 
   return response.blob();
 }
-

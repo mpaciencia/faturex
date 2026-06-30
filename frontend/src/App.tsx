@@ -1,35 +1,29 @@
-import { useState, useEffect } from "react";
-import { Camera, FileSpreadsheet, Settings as SettingsIcon, AlertCircle } from "lucide-react";
-import { getApiConfig } from "./api/client";
+import { useState } from "react";
+import { Camera, FileSpreadsheet, LogOut } from "lucide-react";
 import { Capture } from "./pages/Capture";
 import { Reports } from "./pages/Reports";
-import { Settings } from "./pages/Settings";
+import { Login } from "./pages/Login";
 
-type Tab = "capture" | "reports" | "settings";
+type Tab = "capture" | "reports";
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("capture");
-  const [isConfigured, setIsConfigured] = useState(true);
+  const [token, setToken] = useState<string | null>(localStorage.getItem("faturex_token"));
+  const [userEmail, setUserEmail] = useState<string | null>(localStorage.getItem("faturex_user_email"));
 
-  // Check config on load and tab change
-  const checkConfig = () => {
-    const config = getApiConfig();
-    const configured = !!(config.url && config.key);
-    setIsConfigured(configured);
-    return configured;
+  const handleLoginSuccess = (newToken: string, email: string) => {
+    localStorage.setItem("faturex_token", newToken);
+    localStorage.setItem("faturex_user_email", email);
+    setToken(newToken);
+    setUserEmail(email);
+    setActiveTab("capture");
   };
 
-  useEffect(() => {
-    const configured = checkConfig();
-    if (!configured) {
-      setActiveTab("settings");
-    }
-  }, []);
-
-  // Check config whenever switching tabs to update status
-  const handleTabChange = (tab: Tab) => {
-    checkConfig();
-    setActiveTab(tab);
+  const handleLogout = () => {
+    localStorage.removeItem("faturex_token");
+    localStorage.removeItem("faturex_user_email");
+    setToken(null);
+    setUserEmail(null);
   };
 
   return (
@@ -40,57 +34,78 @@ function App() {
           <span>Faturex</span>
         </div>
 
-        {!isConfigured && (
-          <div
-            onClick={() => setActiveTab("settings")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              fontSize: "0.8rem",
-              color: "var(--error)",
-              cursor: "pointer",
-              background: "rgba(244, 63, 94, 0.1)",
-              padding: "4px 8px",
-              borderRadius: "12px",
-              border: "1px solid rgba(244, 63, 94, 0.2)"
-            }}
-          >
-            <AlertCircle size={14} />
-            <span>Não Configurado</span>
+        {token && userEmail && (
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div
+              style={{
+                fontSize: "0.8rem",
+                color: "var(--text-secondary)",
+                background: "rgba(255, 255, 255, 0.05)",
+                padding: "4px 10px",
+                borderRadius: "12px",
+                border: "1px solid var(--glass-border)",
+                maxWidth: "150px",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap"
+              }}
+              title={userEmail}
+            >
+              {userEmail}
+            </div>
+            <button
+              onClick={handleLogout}
+              style={{
+                background: "none",
+                border: "none",
+                color: "var(--error)",
+                cursor: "pointer",
+                padding: "4px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                opacity: 0.8,
+                transition: "opacity 0.2s"
+              }}
+              title="Terminar Sessão"
+            >
+              <LogOut size={16} />
+            </button>
           </div>
         )}
       </header>
 
       <main>
-        {activeTab === "capture" && <Capture />}
-        {activeTab === "reports" && <Reports />}
-        {activeTab === "settings" && <Settings />}
+        {!token ? (
+          <Login onLoginSuccess={handleLoginSuccess} />
+        ) : (
+          <>
+            {activeTab === "capture" && <Capture />}
+            {activeTab === "reports" && <Reports />}
+          </>
+        )}
       </main>
 
-      <nav className="bottom-nav">
-        <button
-          className={`nav-item ${activeTab === "capture" ? "active" : ""}`}
-          onClick={() => handleTabChange("capture")}
-        >
-          <Camera />
-          <span>Digitalizar</span>
-        </button>
-        <button
-          className={`nav-item ${activeTab === "reports" ? "active" : ""}`}
-          onClick={() => handleTabChange("reports")}
-        >
-          <FileSpreadsheet />
-          <span>Relatórios</span>
-        </button>
-        <button
-          className={`nav-item ${activeTab === "settings" ? "active" : ""}`}
-          onClick={() => handleTabChange("settings")}
-        >
-          <SettingsIcon />
-          <span>Definições</span>
-        </button>
-      </nav>
+      {token && (
+        <nav className="bottom-nav">
+          <button
+            className={`nav-item ${activeTab === "capture" ? "active" : ""}`}
+            onClick={() => setActiveTab("capture")}
+            style={{ width: "50%" }}
+          >
+            <Camera />
+            <span>Digitalizar</span>
+          </button>
+          <button
+            className={`nav-item ${activeTab === "reports" ? "active" : ""}`}
+            onClick={() => setActiveTab("reports")}
+            style={{ width: "50%" }}
+          >
+            <FileSpreadsheet />
+            <span>Relatórios</span>
+          </button>
+        </nav>
+      )}
 
       <div className="footer-text">
         Faturex Web v1.0.0

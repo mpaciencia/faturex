@@ -14,10 +14,13 @@ class Settings(BaseSettings):
     SUPABASE_KEY: str
     GROQ_API_KEY: str = ""
     NIF_API_KEY: str = ""
+    ALLOWED_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    ALLOWED_ORIGIN_REGEX: str = ""
 
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
+        "extra": "ignore",
     }
 
 

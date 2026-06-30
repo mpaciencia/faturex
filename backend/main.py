@@ -4,12 +4,12 @@ Entrada FastAPI — registo de routers, middleware de autenticação, CORS.
 
 import logging
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import APIKeyHeader
 
 from config import settings
-from routes import invoices, reports
+from routes import invoices, reports, auth
+from routes.deps import get_current_user
 
 # ---------------------------------------------------------------------------
 # Configuração de Logging para o Render
@@ -27,39 +27,26 @@ app = FastAPI(
 )
 
 # ---------------------------------------------------------------------------
-# CORS — permissivo (app mobile é o único cliente)
+# CORS
 # ---------------------------------------------------------------------------
+origins = [origin.strip() for origin in settings.ALLOWED_ORIGINS.split(",") if origin.strip()]
+origin_regex = settings.ALLOWED_ORIGIN_REGEX if settings.ALLOWED_ORIGIN_REGEX else None
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
+    allow_origin_regex=origin_regex,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # ---------------------------------------------------------------------------
-# Autenticação por API Key (header X-API-Key)
+# Registo dos routers (públicos e autenticados)
 # ---------------------------------------------------------------------------
-_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
-
-
-async def _verify_api_key(api_key: str = Depends(_api_key_header)):
-    """
-    Dependency global que valida a API Key em todas as rotas.
-    Responde 401 Unauthorized se a chave estiver ausente ou incorreta.
-    """
-    if not api_key or api_key != settings.API_KEY:
-        raise HTTPException(
-            status_code=401,
-            detail="Unauthorized — chave API inválida ou ausente.",
-        )
-
-
-# ---------------------------------------------------------------------------
-# Registo dos routers com dependency global de autenticação
-# ---------------------------------------------------------------------------
-app.include_router(invoices.router, dependencies=[Depends(_verify_api_key)])
-app.include_router(reports.router, dependencies=[Depends(_verify_api_key)])
+app.include_router(auth.router)
+app.include_router(invoices.router, dependencies=[Depends(get_current_user)])
+app.include_router(reports.router, dependencies=[Depends(get_current_user)])
 
 
 @app.get("/", tags=["Health"])
@@ -67,18 +54,4 @@ async def health_check():
     """Endpoint de saúde — não requer autenticação."""
     return {"status": "ok", "service": "FatureX API"}
 
-
-@app.get("/api/test-error", tags=["Debug"])
-async def test_error_logging():
-    """Endpoint de exemplo para demonstrar a captura e logging de exceções."""
-    try:
-        # Simulação de erro numa chamada de API de IA ou inserção no Supabase
-        raise ValueError("Falha simulada de comunicação com o serviço externo.")
-    except Exception:
-        # Grava automaticamente a stack trace completa
-        logger.exception("Erro ao processar serviço externo (IA/Supabase)")
-        raise HTTPException(
-            status_code=500,
-            detail="Erro interno de simulação de logging."
-        )
 
