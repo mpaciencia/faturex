@@ -287,3 +287,124 @@ async def criar_fatura_email(
         )
 
     return FaturaCreateResponse(id=registo["id"], categoria=categoria)
+
+
+@router.post("/pdf", response_model=FaturaCreateResponse, status_code=201)
+async def criar_fatura_pdf(
+    file: UploadFile = File(...),
+    observacoes: Optional[str] = Form(None),
+    current_user=Depends(get_current_user),
+):
+    user_id = current_user.id
+    logger.info("Recebida requisição POST /pdf para processar PDF manual. User: %s", user_id)
+    """
+    Fluxo C — Submissão manual de PDF pela aplicação web.
+
+    Recebe multipart/form-data com:
+    - file: Ficheiro PDF da fatura.
+    - observacoes: Texto livre (opcional).
+
+    O tipo é forçado a 'Despesa' (regra de negócio).
+    """
+    # --- Validar que é PDF ---
+    content_type = file.content_type or ""
+    if "pdf" not in content_type.lower():
+        raise HTTPException(
+            status_code=400,
+            detail="Apenas ficheiros PDF são aceites neste endpoint.",
+        )
+
+    # --- Ler PDF ---
+    try:
+        pdf_bytes = await file.read()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Erro ao ler o ficheiro PDF enviado: {exc}",
+        )
+
+    # --- Extrair QR Code do PDF ---
+    try:
+        qr_string, png_bytes = extract_qr_from_pdf(pdf_bytes)
+    except PDFProcessingError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Erro ao processar o PDF: {exc.message}",
+        )
+
+    # --- Parse da string QR ---
+    try:
+        qr_data = parse_qr_string(qr_string)
+    except QRParseError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Erro no parse do QR Code: {exc.message}",
+        )
+
+    atcud = qr_data["atcud"]
+    data_fatura = qr_data["data_fatura"]
+
+    # --- Verificar duplicado ---
+    try:
+        if supabase_client.fatura_exists(atcud, user_id):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Fatura com ATCUD '{atcud}' já existe.",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Erro ao verificar duplicado no fluxo PDF manual")
+        raise HTTPException(
+            status_code=500,
+            detail="Erro interno ao verificar duplicado.",
+        )
+
+    # --- Upload do PDF original para Storage ---
+    storage_path = _build_storage_path("Email", data_fatura, atcud, "pdf", user_id)
+
+    try:
+        url_documento = supabase_client.upload_documento(
+            path=storage_path,
+            content=pdf_bytes,
+            content_type="application/pdf",
+        )
+    except Exception:
+        logger.exception("Erro no upload para Storage no fluxo PDF manual")
+        raise HTTPException(
+            status_code=500,
+            detail="Erro interno ao guardar o documento no Storage.",
+        )
+
+    # --- Inferir categoria via AI (usando PNG da primeira página) ---
+    categoria = ai_client.inferir_categoria(png_bytes, mime_type="image/png")
+    nome_emissor = await asyncio.to_thread(get_nome_emissor, qr_data["nif_emissor"])
+    observacoes_limpa = observacoes.strip() if observacoes and observacoes.strip() else None
+
+    # --- Inserir na DB (tipo FORÇADO a 'Despesa') ---
+    fatura_data = {
+        "atcud": atcud,
+        "raw_qr_string": qr_data["raw_qr_string"],
+        "tipo": "Despesa",  # REGRA DE NEGÓCIO: sempre 'Despesa'
+        "nif_emissor": qr_data["nif_emissor"],
+        "data_fatura": data_fatura,
+        "valor_total": str(qr_data["valor_total"]),
+        "imposto_total": str(qr_data["imposto_total"]),
+        "categoria": categoria,
+        "url_documento": url_documento,
+        "origem": "Email",
+        "nome_emissor": nome_emissor,
+        "observacoes": observacoes_limpa,
+    }
+
+    try:
+        registo = supabase_client.insert_fatura(fatura_data, user_id)
+    except Exception:
+        logger.exception("Erro ao inserir fatura na DB no fluxo PDF manual")
+        raise HTTPException(
+            status_code=500,
+            detail="Erro interno ao guardar a fatura na base de dados.",
+        )
+
+    return FaturaCreateResponse(id=registo["id"], categoria=categoria)
+

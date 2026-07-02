@@ -164,3 +164,50 @@ export async function getZipExport(startDate: string, endDate: string): Promise<
 
   return response.blob();
 }
+
+// ---------------------------------------------------------------------------
+// Submissão manual de PDF (Fluxo WebApp)
+// ---------------------------------------------------------------------------
+
+export interface SubmitPdfInput {
+  file: File;
+  observacoes?: string;
+}
+
+export async function submitPdfInvoice({
+  file,
+  observacoes,
+}: SubmitPdfInput): Promise<SubmitInvoiceResult> {
+  const { url, token } = getApiConfig();
+
+  if (!url) {
+    throw new Error("O URL do servidor API não está configurado no ficheiro .env.");
+  }
+
+  if (!token) {
+    throw new Error("Sessão não iniciada. Por favor, faça login.");
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+  if (observacoes?.trim()) {
+    formData.append("observacoes", observacoes.trim());
+  }
+
+  const response = await fetch(`${url}/api/faturas/pdf`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+    },
+    body: formData,
+  });
+
+  const responseText = await response.text();
+
+  if (!response.ok) {
+    throw new Error(parseBackendError(responseText) || `Erro HTTP ${response.status}`);
+  }
+
+  return JSON.parse(responseText) as SubmitInvoiceResult;
+}
+
