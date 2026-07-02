@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Html5Qrcode } from "html5-qrcode";
-import { Camera, Upload, CheckCircle2, AlertTriangle, RefreshCw, FileText, Sparkles } from "lucide-react";
+import { Camera, Upload, CheckCircle2, AlertTriangle, RefreshCw, FileText, Sparkles, FileUp, X, Lock } from "lucide-react";
 import { parseAtQrString, QrValidationError } from "../utils/qrValidation";
 import type { AtQrPayload, DocumentType } from "../utils/qrValidation";
-import { submitInvoice } from "../api/client";
+import { submitInvoice, submitPdfInvoice } from "../api/client";
 
 type WorkflowStep = "scan_qr" | "capture_photo" | "confirm_details";
 
@@ -23,6 +23,15 @@ export function Capture() {
   const [tipo, setTipo] = useState<DocumentType>("Despesa");
   const [observacoes, setObservacoes] = useState("");
   const [successResult, setSuccessResult] = useState<{ id: string; categoria: string } | null>(null);
+
+  // PDF Upload States
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfObservacoes, setPdfObservacoes] = useState("");
+  const [pdfIsLoading, setPdfIsLoading] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const [pdfIsDragging, setPdfIsDragging] = useState(false);
+  const [pdfToast, setPdfToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
 
   // Camera selection (avoids virtual/continuity cameras that send split/combined feeds)
   const [availableCameras, setAvailableCameras] = useState<{ id: string; label: string }[]>([]);
@@ -298,6 +307,82 @@ export function Capture() {
     setPreviewUrl(null);
     setObservacoes("");
     setStep("scan_qr");
+  };
+
+  // --- PDF Upload Handlers ---
+
+  const showPdfToast = (type: "success" | "error", message: string) => {
+    setPdfToast({ type, message });
+    setTimeout(() => setPdfToast(null), 4000);
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const handlePdfSelect = (file: File) => {
+    if (file.type !== "application/pdf") {
+      setPdfError("Apenas ficheiros PDF são aceites.");
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      setPdfError("O ficheiro excede o limite de 20 MB.");
+      return;
+    }
+    setPdfError(null);
+    setPdfFile(file);
+  };
+
+  const handlePdfFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handlePdfSelect(file);
+    // Reset input so the same file can be re-selected
+    e.target.value = "";
+  };
+
+  const handlePdfDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setPdfIsDragging(true);
+  }, []);
+
+  const handlePdfDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setPdfIsDragging(false);
+  }, []);
+
+  const handlePdfDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setPdfIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handlePdfSelect(file);
+  }, []);
+
+  const handlePdfSubmit = async () => {
+    if (!pdfFile) return;
+    setPdfIsLoading(true);
+    setPdfError(null);
+
+    try {
+      const result = await submitPdfInvoice({
+        file: pdfFile,
+        observacoes: pdfObservacoes,
+      });
+      showPdfToast("success", `Fatura registada! Categoria: ${result.categoria}`);
+      setPdfFile(null);
+      setPdfObservacoes("");
+      if (pdfInputRef.current) pdfInputRef.current.value = "";
+    } catch (err: any) {
+      const msg = err?.message || "Erro ao submeter o PDF.";
+      setPdfError(msg);
+      showPdfToast("error", msg);
+    } finally {
+      setPdfIsLoading(false);
+    }
   };
 
   return (
@@ -600,6 +685,133 @@ export function Capture() {
             </form>
           )}
         </>
+      )}
+
+      {/* ============================================================ */}
+      {/* PDF UPLOAD SECTION                                           */}
+      {/* ============================================================ */}
+      <div className="section-divider">
+        <span>Ou submeter PDF</span>
+      </div>
+
+      <div className="card">
+        <div className="logo" style={{ justifyContent: "center", marginBottom: "16px" }}>
+          <FileUp size={22} />
+          <span>Submeter Fatura PDF</span>
+        </div>
+        <p style={{ textAlign: "center", marginBottom: "20px" }}>
+          Arraste ou selecione um ficheiro PDF de uma fatura para processar automaticamente.
+        </p>
+
+        {/* Drag & Drop Zone */}
+        {!pdfFile && (
+          <label
+            htmlFor="pdf-file-input"
+            className={`pdf-upload-zone ${pdfIsDragging ? "pdf-drop-active" : ""}`}
+            onDragOver={handlePdfDragOver}
+            onDragLeave={handlePdfDragLeave}
+            onDrop={handlePdfDrop}
+          >
+            <FileUp />
+            <div>
+              <span style={{ fontWeight: 600, color: "var(--accent)" }}>Selecionar ou arrastar PDF</span>
+            </div>
+            <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+              Ficheiros PDF até 20 MB
+            </span>
+          </label>
+        )}
+        <input
+          ref={pdfInputRef}
+          id="pdf-file-input"
+          type="file"
+          accept="application/pdf"
+          style={{ display: "none" }}
+          onChange={handlePdfFileChange}
+          disabled={pdfIsLoading}
+        />
+
+        {/* File Preview */}
+        {pdfFile && (
+          <div className="pdf-file-preview">
+            <FileText />
+            <div className="pdf-file-info">
+              <div className="pdf-file-name">{pdfFile.name}</div>
+              <div className="pdf-file-size">{formatFileSize(pdfFile.size)}</div>
+            </div>
+            <button
+              className="pdf-file-remove"
+              onClick={() => { setPdfFile(null); setPdfError(null); }}
+              disabled={pdfIsLoading}
+              title="Remover ficheiro"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        )}
+
+        {/* Error */}
+        {pdfError && (
+          <div className="alert alert-error" style={{ marginTop: "16px" }}>
+            <AlertTriangle />
+            <div>
+              <strong>Erro:</strong> {pdfError}
+            </div>
+          </div>
+        )}
+
+        {pdfFile && (
+          <>
+            {/* Tipo de Documento (locked) */}
+            <div className="form-group" style={{ marginTop: "20px" }}>
+              <label>Tipo de Documento</label>
+              <div className="tipo-locked-badge">
+                <Lock size={14} />
+                Despesa
+              </div>
+            </div>
+
+            {/* Observações */}
+            <div className="form-group">
+              <label htmlFor="pdf-observacoes">Observações (opcional)</label>
+              <textarea
+                id="pdf-observacoes"
+                className="form-control"
+                rows={3}
+                placeholder="Ex: Fatura da EDP, Material para obra Y..."
+                value={pdfObservacoes}
+                onChange={(e) => setPdfObservacoes(e.target.value)}
+                disabled={pdfIsLoading}
+              />
+            </div>
+
+            {/* Submit Button */}
+            <button
+              className="btn btn-primary"
+              onClick={handlePdfSubmit}
+              disabled={pdfIsLoading}
+              style={{ marginTop: "8px" }}
+            >
+              {pdfIsLoading ? (
+                <>
+                  <div className="spinner" style={{ width: "16px", height: "16px" }}></div> A processar...
+                </>
+              ) : (
+                <>
+                  <FileUp size={16} /> Submeter PDF
+                </>
+              )}
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Toast Notification */}
+      {pdfToast && (
+        <div className={`toast toast-${pdfToast.type}`}>
+          {pdfToast.type === "success" ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+          {pdfToast.message}
+        </div>
       )}
     </div>
   );
