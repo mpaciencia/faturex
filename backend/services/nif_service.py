@@ -30,7 +30,7 @@ def get_nome_emissor(nif: str) -> str | None:
 
     try:
         with urlopen(url, timeout=5) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+            payload = json.loads(response.read(65536).decode("utf-8"))
     except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
         logger.warning("Erro ao consultar NIF.pt para %s: %s", nif_limpo, exc)
         return None

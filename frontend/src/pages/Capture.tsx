@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Html5Qrcode } from "html5-qrcode";
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { Camera, Upload, CheckCircle2, AlertTriangle, RefreshCw, FileText, Sparkles, FileUp, X, Lock } from "lucide-react";
 import { parseAtQrString, QrValidationError } from "../utils/qrValidation";
 import type { AtQrPayload, DocumentType } from "../utils/qrValidation";
@@ -132,7 +132,10 @@ export function Capture() {
     // Let DOM update so the qr-reader container is present
     const timeoutId = setTimeout(async () => {
       try {
-        const html5Qrcode = new Html5Qrcode("qr-reader");
+        const html5Qrcode = new Html5Qrcode("qr-reader", {
+          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+          verbose: false,
+        });
         html5QrcodeRef.current = html5Qrcode;
 
         const cameraId = await resolveCameraId(validOverrideId);
@@ -245,6 +248,7 @@ export function Capture() {
               type: "image/jpeg",
             });
             setSelectedFile(file);
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
             setPreviewUrl(URL.createObjectURL(file));
 
             // Stop stream and move to confirmation
@@ -269,6 +273,7 @@ export function Capture() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
     setSelectedFile(file);
     setPreviewUrl(URL.createObjectURL(file));
     setStep("confirm_details");
@@ -304,6 +309,7 @@ export function Capture() {
     setSuccessResult(null);
     setParsedData(null);
     setSelectedFile(null);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     setObservacoes("");
     setStep("scan_qr");

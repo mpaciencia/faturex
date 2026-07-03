@@ -1,14 +1,14 @@
 """
-Rotas de faturas — POST /api/faturas/mobile e POST /api/faturas/email.
+Rotas de faturas — POST /api/faturas/mobile, /email e /pdf.
 
-Os routers apenas orquestram serviços. Nenhuma lógica de negócio aqui.
+Os routers apenas orquestram serviços. A lógica partilhada de processamento
+de PDFs está centralizada em _process_pdf_and_save.
 """
 
 import asyncio
 import json
 import logging
 import re
-from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -23,6 +23,9 @@ from services.qr_parser import QRParseError, parse_qr_string
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/faturas", tags=["Faturas"])
+
+# Limite de tamanho de upload (20 MB)
+MAX_UPLOAD_SIZE = 20 * 1024 * 1024
 
 
 def _build_storage_path(origem: str, data_fatura: str, atcud: str, ext: str, user_id: str) -> str:
@@ -46,6 +49,128 @@ def _build_storage_path(origem: str, data_fatura: str, atcud: str, ext: str, use
     return f"{user_id}/{origem}/{ano}/{mes}/{atcud}.{ext}"
 
 
+def _validate_upload_size(file_bytes: bytes) -> None:
+    """Valida que o ficheiro não excede o tamanho máximo permitido."""
+    if len(file_bytes) > MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Ficheiro excede o tamanho máximo permitido ({MAX_UPLOAD_SIZE // (1024 * 1024)} MB).",
+        )
+
+
+async def _process_pdf_and_save(
+    pdf_bytes: bytes,
+    user_id: str,
+    origem: str,
+    tipo: str = "Despesa",
+    observacoes: str | None = None,
+) -> FaturaCreateResponse:
+    """
+    Lógica partilhada para processar um PDF de fatura e gravar no Supabase.
+
+    Sequência: extrair QR → parse → verificar duplicado → upload Storage
+    → inferir categoria via AI → inserir na DB.
+
+    Args:
+        pdf_bytes: Conteúdo binário do PDF.
+        user_id: ID do utilizador Supabase.
+        origem: Valor para o campo 'origem' ('Mobile', 'Email').
+        tipo: 'Despesa' ou 'Receita'.
+        observacoes: Texto livre opcional.
+
+    Returns:
+        FaturaCreateResponse com id e categoria.
+    """
+    # --- Extrair QR Code do PDF ---
+    try:
+        qr_string, png_bytes = extract_qr_from_pdf(pdf_bytes)
+    except PDFProcessingError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Erro ao processar o PDF: {exc.message}",
+        )
+
+    # --- Parse da string QR ---
+    try:
+        qr_data = parse_qr_string(qr_string)
+    except QRParseError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Erro no parse do QR Code: {exc.message}",
+        )
+
+    atcud = qr_data["atcud"]
+    data_fatura = qr_data["data_fatura"]
+
+    # --- Verificar duplicado ---
+    try:
+        exists = await asyncio.to_thread(supabase_client.fatura_exists, atcud, user_id)
+        if exists:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Fatura com ATCUD '{atcud}' já existe.",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Erro ao verificar duplicado")
+        raise HTTPException(
+            status_code=500,
+            detail="Erro interno ao verificar duplicado.",
+        )
+
+    # --- Upload do PDF para Storage ---
+    storage_path = _build_storage_path(origem, data_fatura, atcud, "pdf", user_id)
+
+    try:
+        url_documento = await asyncio.to_thread(
+            supabase_client.upload_documento,
+            storage_path, pdf_bytes, "application/pdf",
+        )
+    except Exception:
+        logger.exception("Erro no upload para Storage")
+        raise HTTPException(
+            status_code=500,
+            detail="Erro interno ao guardar o documento no Storage.",
+        )
+
+    # --- Inferir categoria via AI + nome do emissor (ambos em threads separadas) ---
+    categoria = await asyncio.to_thread(ai_client.inferir_categoria, png_bytes, "image/png")
+    nome_emissor = await asyncio.to_thread(get_nome_emissor, qr_data["nif_emissor"])
+
+    # --- Inserir na DB ---
+    fatura_data = {
+        "atcud": atcud,
+        "raw_qr_string": qr_data["raw_qr_string"],
+        "tipo": tipo,
+        "nif_emissor": qr_data["nif_emissor"],
+        "data_fatura": data_fatura,
+        "valor_total": str(qr_data["valor_total"]),
+        "imposto_total": str(qr_data["imposto_total"]),
+        "categoria": categoria,
+        "url_documento": url_documento,
+        "origem": origem,
+        "nome_emissor": nome_emissor,
+        "observacoes": observacoes,
+    }
+
+    try:
+        registo = await asyncio.to_thread(supabase_client.insert_fatura, fatura_data, user_id)
+    except Exception:
+        logger.exception("Erro ao inserir fatura na DB")
+        raise HTTPException(
+            status_code=500,
+            detail="Erro interno ao guardar a fatura na base de dados.",
+        )
+
+    return FaturaCreateResponse(id=registo["id"], categoria=categoria)
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+
 @router.post("/mobile", response_model=FaturaCreateResponse, status_code=201)
 async def criar_fatura_mobile(
     qr_data: str = Form(...),
@@ -54,8 +179,6 @@ async def criar_fatura_mobile(
     file: UploadFile = File(...),
     current_user=Depends(get_current_user),
 ):
-    user_id = current_user.id
-    logger.info("Recebida requisição POST /mobile para criar fatura. User: %s", user_id)
     """
     Fluxo A — App Mobile.
 
@@ -64,6 +187,9 @@ async def criar_fatura_mobile(
     - tipo: 'Despesa' ou 'Receita'.
     - file: Imagem JPEG/PNG do talão.
     """
+    user_id = current_user.id
+    logger.info("Recebida requisição POST /mobile para criar fatura. User: %s", user_id)
+
     # --- Validar tipo ---
     if tipo not in TIPOS_VALIDOS:
         raise HTTPException(
@@ -90,7 +216,8 @@ async def criar_fatura_mobile(
 
     # --- Verificar duplicado ---
     try:
-        if supabase_client.fatura_exists(qr_payload.atcud, user_id):
+        exists = await asyncio.to_thread(supabase_client.fatura_exists, qr_payload.atcud, user_id)
+        if exists:
             raise HTTPException(
                 status_code=409,
                 detail=f"Fatura com ATCUD '{qr_payload.atcud}' já existe.",
@@ -113,6 +240,8 @@ async def criar_fatura_mobile(
             detail=f"Erro ao ler o ficheiro enviado: {exc}",
         )
 
+    _validate_upload_size(file_bytes)
+
     # --- Determinar extensão e content type ---
     content_type = file.content_type or "image/jpeg"
     ext = "png" if "png" in content_type else "jpg"
@@ -128,10 +257,9 @@ async def criar_fatura_mobile(
     storage_path = _build_storage_path("Mobile", data_fatura_iso, qr_payload.atcud, ext, user_id)
 
     try:
-        url_documento = supabase_client.upload_documento(
-            path=storage_path,
-            content=file_bytes,
-            content_type=content_type,
+        url_documento = await asyncio.to_thread(
+            supabase_client.upload_documento,
+            storage_path, file_bytes, content_type,
         )
     except Exception:
         logger.exception("Erro no upload para Storage no fluxo mobile")
@@ -141,7 +269,7 @@ async def criar_fatura_mobile(
         )
 
     # --- Inferir categoria via AI (Groq/Llama) ---
-    categoria = ai_client.inferir_categoria(file_bytes, mime_type=content_type)
+    categoria = await asyncio.to_thread(ai_client.inferir_categoria, file_bytes, content_type)
     nome_emissor = await asyncio.to_thread(get_nome_emissor, qr_payload.nif_emissor)
     observacoes_limpa = observacoes.strip() if observacoes and observacoes.strip() else None
 
@@ -162,7 +290,7 @@ async def criar_fatura_mobile(
     }
 
     try:
-        registo = supabase_client.insert_fatura(fatura_data, user_id)
+        registo = await asyncio.to_thread(supabase_client.insert_fatura, fatura_data, user_id)
     except Exception:
         logger.exception("Erro ao inserir fatura na DB no fluxo mobile")
         raise HTTPException(
@@ -179,15 +307,16 @@ async def criar_fatura_email(
     file: UploadFile = File(...),
     current_user=Depends(get_current_user),
 ):
-    user_id = current_user.id
-    logger.info("Recebida requisição POST /email para processar PDF da fatura. User: %s", user_id)
     """
-    Fluxo B — Gmail / Google Apps Script.
+    Fluxo B — PDF recebido por email.
 
     Recebe multipart/form-data com:
     - tipo: 'Despesa' ou 'Receita'.
     - file: Ficheiro PDF da fatura.
     """
+    user_id = current_user.id
+    logger.info("Recebida requisição POST /email para processar PDF da fatura. User: %s", user_id)
+
     # --- Validar tipo ---
     if tipo not in TIPOS_VALIDOS:
         raise HTTPException(
@@ -204,89 +333,14 @@ async def criar_fatura_email(
             detail=f"Erro ao ler o ficheiro PDF enviado: {exc}",
         )
 
-    # --- Extrair QR Code do PDF ---
-    try:
-        qr_string, png_bytes = extract_qr_from_pdf(pdf_bytes)
-    except PDFProcessingError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Erro ao processar o PDF: {exc.message}",
-        )
+    _validate_upload_size(pdf_bytes)
 
-    # --- Parse da string QR ---
-    try:
-        qr_data = parse_qr_string(qr_string)
-    except QRParseError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Erro no parse do QR Code: {exc.message}",
-        )
-
-    atcud = qr_data["atcud"]
-    data_fatura = qr_data["data_fatura"]
-
-    # --- Verificar duplicado ---
-    try:
-        if supabase_client.fatura_exists(atcud, user_id):
-            raise HTTPException(
-                status_code=409,
-                detail=f"Fatura com ATCUD '{atcud}' já existe.",
-            )
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Erro ao verificar duplicado no fluxo email")
-        raise HTTPException(
-            status_code=500,
-            detail="Erro interno ao verificar duplicado.",
-        )
-
-    # --- Upload do PDF original para Storage ---
-    storage_path = _build_storage_path("Email", data_fatura, atcud, "pdf", user_id)
-
-    try:
-        url_documento = supabase_client.upload_documento(
-            path=storage_path,
-            content=pdf_bytes,
-            content_type="application/pdf",
-        )
-    except Exception:
-        logger.exception("Erro no upload para Storage no fluxo email")
-        raise HTTPException(
-            status_code=500,
-            detail="Erro interno ao guardar o documento no Storage.",
-        )
-
-    # --- Inferir categoria via AI (Groq/Llama) (usando PNG da primeira página) ---
-    categoria = ai_client.inferir_categoria(png_bytes, mime_type="image/png")
-    nome_emissor = await asyncio.to_thread(get_nome_emissor, qr_data["nif_emissor"])
-
-    # --- Inserir na DB ---
-    fatura_data = {
-        "atcud": atcud,
-        "raw_qr_string": qr_data["raw_qr_string"],
-        "tipo": tipo,
-        "nif_emissor": qr_data["nif_emissor"],
-        "data_fatura": data_fatura,
-        "valor_total": str(qr_data["valor_total"]),
-        "imposto_total": str(qr_data["imposto_total"]),
-        "categoria": categoria,
-        "url_documento": url_documento,
-        "origem": "Email",
-        "nome_emissor": nome_emissor,
-        "observacoes": None,
-    }
-
-    try:
-        registo = supabase_client.insert_fatura(fatura_data, user_id)
-    except Exception:
-        logger.exception("Erro ao inserir fatura na DB no fluxo email")
-        raise HTTPException(
-            status_code=500,
-            detail="Erro interno ao guardar a fatura na base de dados.",
-        )
-
-    return FaturaCreateResponse(id=registo["id"], categoria=categoria)
+    return await _process_pdf_and_save(
+        pdf_bytes=pdf_bytes,
+        user_id=user_id,
+        origem="Email",
+        tipo=tipo,
+    )
 
 
 @router.post("/pdf", response_model=FaturaCreateResponse, status_code=201)
@@ -295,8 +349,6 @@ async def criar_fatura_pdf(
     observacoes: Optional[str] = Form(None),
     current_user=Depends(get_current_user),
 ):
-    user_id = current_user.id
-    logger.info("Recebida requisição POST /pdf para processar PDF manual. User: %s", user_id)
     """
     Fluxo C — Submissão manual de PDF pela aplicação web.
 
@@ -306,6 +358,9 @@ async def criar_fatura_pdf(
 
     O tipo é forçado a 'Despesa' (regra de negócio).
     """
+    user_id = current_user.id
+    logger.info("Recebida requisição POST /pdf para processar PDF manual. User: %s", user_id)
+
     # --- Validar que é PDF ---
     content_type = file.content_type or ""
     if "pdf" not in content_type.lower():
@@ -323,88 +378,14 @@ async def criar_fatura_pdf(
             detail=f"Erro ao ler o ficheiro PDF enviado: {exc}",
         )
 
-    # --- Extrair QR Code do PDF ---
-    try:
-        qr_string, png_bytes = extract_qr_from_pdf(pdf_bytes)
-    except PDFProcessingError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Erro ao processar o PDF: {exc.message}",
-        )
+    _validate_upload_size(pdf_bytes)
 
-    # --- Parse da string QR ---
-    try:
-        qr_data = parse_qr_string(qr_string)
-    except QRParseError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Erro no parse do QR Code: {exc.message}",
-        )
-
-    atcud = qr_data["atcud"]
-    data_fatura = qr_data["data_fatura"]
-
-    # --- Verificar duplicado ---
-    try:
-        if supabase_client.fatura_exists(atcud, user_id):
-            raise HTTPException(
-                status_code=409,
-                detail=f"Fatura com ATCUD '{atcud}' já existe.",
-            )
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Erro ao verificar duplicado no fluxo PDF manual")
-        raise HTTPException(
-            status_code=500,
-            detail="Erro interno ao verificar duplicado.",
-        )
-
-    # --- Upload do PDF original para Storage ---
-    storage_path = _build_storage_path("Email", data_fatura, atcud, "pdf", user_id)
-
-    try:
-        url_documento = supabase_client.upload_documento(
-            path=storage_path,
-            content=pdf_bytes,
-            content_type="application/pdf",
-        )
-    except Exception:
-        logger.exception("Erro no upload para Storage no fluxo PDF manual")
-        raise HTTPException(
-            status_code=500,
-            detail="Erro interno ao guardar o documento no Storage.",
-        )
-
-    # --- Inferir categoria via AI (usando PNG da primeira página) ---
-    categoria = ai_client.inferir_categoria(png_bytes, mime_type="image/png")
-    nome_emissor = await asyncio.to_thread(get_nome_emissor, qr_data["nif_emissor"])
     observacoes_limpa = observacoes.strip() if observacoes and observacoes.strip() else None
 
-    # --- Inserir na DB (tipo FORÇADO a 'Despesa') ---
-    fatura_data = {
-        "atcud": atcud,
-        "raw_qr_string": qr_data["raw_qr_string"],
-        "tipo": "Despesa",  # REGRA DE NEGÓCIO: sempre 'Despesa'
-        "nif_emissor": qr_data["nif_emissor"],
-        "data_fatura": data_fatura,
-        "valor_total": str(qr_data["valor_total"]),
-        "imposto_total": str(qr_data["imposto_total"]),
-        "categoria": categoria,
-        "url_documento": url_documento,
-        "origem": "Email",
-        "nome_emissor": nome_emissor,
-        "observacoes": observacoes_limpa,
-    }
-
-    try:
-        registo = supabase_client.insert_fatura(fatura_data, user_id)
-    except Exception:
-        logger.exception("Erro ao inserir fatura na DB no fluxo PDF manual")
-        raise HTTPException(
-            status_code=500,
-            detail="Erro interno ao guardar a fatura na base de dados.",
-        )
-
-    return FaturaCreateResponse(id=registo["id"], categoria=categoria)
-
+    return await _process_pdf_and_save(
+        pdf_bytes=pdf_bytes,
+        user_id=user_id,
+        origem="Email",
+        tipo="Despesa",  # REGRA DE NEGÓCIO: sempre 'Despesa'
+        observacoes=observacoes_limpa,
+    )
