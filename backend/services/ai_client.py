@@ -47,7 +47,7 @@ def inferir_categoria(image_bytes: bytes, mime_type: str = "image/png") -> str:
         b64 = base64.b64encode(image_bytes).decode("utf-8")
 
         response = _client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            model="qwen/qwen3.6-27b",
             messages=[
                 {
                     "role": "user",
@@ -62,6 +62,7 @@ def inferir_categoria(image_bytes: bytes, mime_type: str = "image/png") -> str:
             ],
             max_tokens=64,
             temperature=0,
+            reasoning_effort="none",
         )
 
         texto_resposta = response.choices[0].message.content.strip()
