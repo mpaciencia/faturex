@@ -8,6 +8,7 @@ Devolve a categoria inferida ou "Outros" se o parse/validação falhar.
 import base64
 import json
 import logging
+import re
 
 from groq import Groq
 
@@ -16,16 +17,23 @@ from models.schemas import CATEGORIAS_VALIDAS
 
 logger = logging.getLogger(__name__)
 
-_PROMPT = """Analisa esta imagem de uma fatura/talão de uma empresa de arquitetura portuguesa.
-Responde APENAS com um objeto JSON válido, sem texto adicional, sem markdown:
+_PROMPT = """Classifica esta fatura/talão numa ÚNICA categoria. Responde SÓ com JSON, nada mais.
 {"categoria": "<categoria>"}
 
-Categorias possíveis: Material de Escritório, Deslocações e Transportes,
-Alimentação e Representação, Telecomunicações, Software e Serviços Digitais,
-Equipamento e Ferramentas, Obras e Materiais de Construção, Serviços Externos,
-Publicidade e Marketing, Outros.
+CATEGORIAS E EXEMPLOS:
+- Alimentação e Representação → cafés, restaurantes, supermercados, pastelarias, padarias, Nespresso, snacks, água, refeições
+- Deslocações e Transportes → combustível, portagens, estacionamento, táxis, Uber, Bolt, bilhetes de transporte, Via Verde
+- Material de Escritório → papel, canetas, tinteiros, impressão, encadernação, livrarias, papelarias, cartuchos
+- Telecomunicações → telemóvel, internet, NOS, MEO, Vodafone, telefone fixo
+- Software e Serviços Digitais → licenças, subscrituras, domínios, hosting, Adobe, Microsoft, Google, apps
+- Equipamento e Ferramentas → computadores, monitores, ferramentas, máquinas, hardware, eletrodomésticos, eletrónica
+- Obras e Materiais de Construção → cimento, tijolos, tintas, madeira, ferragens, materiais de construção, Leroy Merlin
+- Serviços Externos → seguros, contabilidade, consultoria, advogados, limpeza, manutenção, serviços profissionais
+- Publicidade e Marketing → impressão gráfica, flyers, publicidade online, Google Ads, redes sociais, brindes
+- Outros → APENAS se nenhuma categoria acima se aplicar
 
-Se não conseguires determinar a categoria, usa "Outros"."""
+REGRA: decide pela atividade principal do emissor ou pelo produto comprado. Não hesites.
+/no_think"""
 
 _client = Groq(api_key=settings.GROQ_API_KEY)
 
@@ -60,12 +68,38 @@ def inferir_categoria(image_bytes: bytes, mime_type: str = "image/png") -> str:
                     ],
                 }
             ],
-            max_tokens=64,
-            temperature=0,
-            reasoning_effort="none",
+            max_tokens=1024,
+            temperature=0.6,
         )
 
-        texto_resposta = response.choices[0].message.content.strip()
+        raw_content = response.choices[0].message.content
+        logger.debug("Resposta bruta da IA: %r", raw_content)
+
+        if not raw_content or not raw_content.strip():
+            logger.warning("Serviço de IA devolveu resposta vazia. A usar 'Outros'.")
+            return "Outros"
+
+        texto_resposta = raw_content.strip()
+
+        # Remover thinking tags (completas ou incompletas por truncagem)
+        if "<think>" in texto_resposta:
+            # Tag completa: <think>...</think>
+            texto_resposta = re.sub(r"<think>.*?</think>", "", texto_resposta, flags=re.DOTALL).strip()
+            # Tag incompleta (cortada pelo max_tokens): <think>... sem </think>
+            if "<think>" in texto_resposta:
+                texto_resposta = re.sub(r"<think>.*", "", texto_resposta, flags=re.DOTALL).strip()
+
+        # Tentar extrair JSON mesmo se vier com markdown (```json ... ```)
+        if "```" in texto_resposta:
+            json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", texto_resposta, re.DOTALL)
+            if json_match:
+                texto_resposta = json_match.group(1)
+
+        # Último recurso: procurar qualquer objeto JSON na resposta
+        if not texto_resposta.startswith("{"):
+            json_match = re.search(r"(\{[^}]*\})", texto_resposta)
+            if json_match:
+                texto_resposta = json_match.group(1)
 
         dados = json.loads(texto_resposta)
         categoria = dados.get("categoria", "Outros")
@@ -89,3 +123,4 @@ def inferir_categoria(image_bytes: bytes, mime_type: str = "image/png") -> str:
     except Exception:
         logger.exception("Erro inesperado na chamada ao serviço de IA. A usar 'Outros'.")
         return "Outros"
+
